@@ -274,13 +274,18 @@ const server = http.createServer(async (req, res) => {
         );
 
         if (existing.rowCount === 0) {
-          // New check-in — enforce the cap, using a row lock on the count
-          // query's underlying rows to reduce (not perfectly eliminate
-          // without SERIALIZABLE isolation, but meaningfully reduce) the
-          // chance of two simultaneous requests both slipping past the cap.
+          // New check-in — serialize concurrent attempts for this exact
+          // game+team+personType group using an advisory lock, so two
+          // simultaneous requests can't both slip past the cap check at
+          // once. (FOR UPDATE can't be combined with COUNT(*) - it's an
+          // aggregate, not real rows to lock - so an advisory lock is the
+          // correct tool here, not a row lock.) Auto-released at COMMIT/
+          // ROLLBACK, no separate unlock call needed.
+          await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [gameId + ':' + teamId + ':' + personType]);
+
           const cap = personType === 'player' ? MAX_PLAYERS_CHECKIN : MAX_STAFF_CHECKIN;
           const countResult = await client.query(
-            'SELECT COUNT(*) FROM checkins WHERE game_id = $1 AND team_id = $2 AND person_type = $3 FOR UPDATE',
+            'SELECT COUNT(*) FROM checkins WHERE game_id = $1 AND team_id = $2 AND person_type = $3',
             [gameId, teamId, personType]
           );
           const currentCount = parseInt(countResult.rows[0].count, 10);
