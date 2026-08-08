@@ -181,6 +181,13 @@ async function fetchGameWithRosters(gameId) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
 
+  // GET /api/config — expose the configured caps to the frontend
+  if (req.method === 'GET' && url.pathname === '/api/config') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ maxPlayers: MAX_PLAYERS_CHECKIN, maxStaff: MAX_STAFF_CHECKIN }));
+    return;
+  }
+
   // GET /api/game/:gameId — deep-link resolution: event info + both rosters
   const gameMatch = url.pathname.match(/^\/api\/game\/([^/]+)$/);
   if (req.method === 'GET' && gameMatch) {
@@ -197,7 +204,116 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Stage 2 will add: GET/POST /api/checkin
+  // GET /api/checkins/:gameId — current check-in state for this game (both teams)
+  const checkinsGetMatch = url.pathname.match(/^\/api\/checkins\/([^/]+)$/);
+  if (req.method === 'GET' && checkinsGetMatch) {
+    const gameId = decodeURIComponent(checkinsGetMatch[1]);
+    try {
+      const result = await pool.query(
+        'SELECT game_id, team_id, team_name, person_type, profile_id, name, jersey_number FROM checkins WHERE game_id = $1 ORDER BY team_id, person_type, name',
+        [gameId]
+      );
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ checkins: result.rows }));
+    } catch (err) {
+      console.error('[api/checkins GET] Error:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // POST /api/checkin — add/update or remove one person's check-in status
+  if (req.method === 'POST' && url.pathname === '/api/checkin') {
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', async () => {
+      let payload;
+      try {
+        payload = JSON.parse(body);
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+      }
+
+      const { gameId, teamId, teamName, personType, profileId, name, jerseyNumber, action } = payload;
+
+      if (!gameId || !teamId || !teamName || !personType || !profileId || !name || !action) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Missing required field(s).' }));
+      }
+      if (!['player', 'staff'].includes(personType)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'personType must be "player" or "staff".' }));
+      }
+      if (!['add', 'remove'].includes(action)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'action must be "add" or "remove".' }));
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        if (action === 'remove') {
+          await client.query(
+            'DELETE FROM checkins WHERE game_id = $1 AND team_id = $2 AND profile_id = $3',
+            [gameId, teamId, profileId]
+          );
+          await client.query('COMMIT');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: true }));
+        }
+
+        // action === 'add' — check whether this person is already checked in
+        // (an update, doesn't count against the cap) vs. a genuinely new
+        // check-in (does count, and must be validated against the cap).
+        const existing = await client.query(
+          'SELECT 1 FROM checkins WHERE game_id = $1 AND team_id = $2 AND profile_id = $3',
+          [gameId, teamId, profileId]
+        );
+
+        if (existing.rowCount === 0) {
+          // New check-in — enforce the cap, using a row lock on the count
+          // query's underlying rows to reduce (not perfectly eliminate
+          // without SERIALIZABLE isolation, but meaningfully reduce) the
+          // chance of two simultaneous requests both slipping past the cap.
+          const cap = personType === 'player' ? MAX_PLAYERS_CHECKIN : MAX_STAFF_CHECKIN;
+          const countResult = await client.query(
+            'SELECT COUNT(*) FROM checkins WHERE game_id = $1 AND team_id = $2 AND person_type = $3 FOR UPDATE',
+            [gameId, teamId, personType]
+          );
+          const currentCount = parseInt(countResult.rows[0].count, 10);
+          if (currentCount >= cap) {
+            await client.query('ROLLBACK');
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ error: `Cap reached (${cap} ${personType}s already checked in for this team).` }));
+          }
+        }
+
+        await client.query(
+          `INSERT INTO checkins (game_id, team_id, team_name, person_type, profile_id, name, jersey_number, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+           ON CONFLICT (game_id, team_id, profile_id)
+           DO UPDATE SET jersey_number = EXCLUDED.jersey_number, name = EXCLUDED.name, updated_at = now()`,
+          [gameId, teamId, teamName, personType, profileId, name, jerseyNumber || null]
+        );
+
+        await client.query('COMMIT');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('[api/checkin POST] Error:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      } finally {
+        client.release();
+      }
+    });
+    return;
+  }
+
   // Stage 3 will add: GET/POST /api/match-report
 
   if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {

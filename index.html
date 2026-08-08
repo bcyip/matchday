@@ -2,41 +2,277 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>USCCS Check-In / Match Report</title>
+  <title>USCCS Match Day</title>
   <style>
-    body { font-family: -apple-system, sans-serif; padding: 24px; max-width: 700px; margin: 0 auto; }
-    pre { background: #f4f6fa; padding: 16px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; }
+    :root {
+      --navy: #11213F; --blue: #6BC4E8; --gold: #E7C247;
+      --bg: #F4F6FA; --border: #E1E5EC; --gray: #5A6472; --danger: #C0392B; --success: #1F7A4D;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg); margin: 0; color: #1a1a1a; }
+    header { background: var(--navy); color: var(--gold); padding: 14px 20px; font-weight: 700; font-size: 18px; }
+    main { max-width: 800px; margin: 0 auto; padding: 20px; }
+    .card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+    .muted { color: var(--gray); font-size: 13px; }
+    .err { color: var(--danger); font-size: 13px; margin-top: 6px; }
+    button { padding: 10px 16px; border-radius: 8px; border: none; background: var(--navy); color: #fff; font-weight: 600; cursor: pointer; font-size: 14px; }
+    button.secondary { background: #fff; color: var(--navy); border: 1px solid var(--border); }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    button:hover:not(:disabled) { opacity: .9; }
+    .landing-buttons { display: flex; gap: 12px; margin-top: 14px; }
+    .landing-buttons button { flex: 1; padding: 20px; font-size: 16px; }
+    .team-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 650px) { .team-columns { grid-template-columns: 1fr; } }
+    .team-col h3 { margin: 0 0 4px; color: var(--navy); }
+    .cap-counter { font-size: 12.5px; color: var(--gray); margin-bottom: 10px; }
+    .cap-counter.at-cap { color: var(--danger); font-weight: 600; }
+    .roster-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+    .roster-row input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; }
+    .roster-row .rname { flex: 1; font-size: 14px; }
+    .roster-row input[type="text"] { width: 46px; padding: 5px; border: 1px solid var(--border); border-radius: 5px; text-align: center; font-size: 13px; }
+    .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--gray); margin: 14px 0 4px; }
+    .back-link { display: inline-block; margin-bottom: 14px; color: var(--navy); text-decoration: none; font-size: 13px; }
+    .back-link:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
-  <h1>Stage 1 test page</h1>
-  <p>This is a placeholder — real Check-In / Match Report UI comes in later stages.</p>
-  <p>This page just proves the deep-link resolution endpoint works end to end.</p>
-  <div id="output">Loading...</div>
 
-  <script>
-    const params = new URLSearchParams(window.location.search);
-    const gameId = params.get('game');
-    const output = document.getElementById('output');
+<header>USCCS Match Day</header>
 
+<main>
+  <div id="loadingState" class="card">
+    <p class="muted">Loading game...</p>
+  </div>
+
+  <div id="errorState" class="card" style="display:none;">
+    <p class="err" id="errorText"></p>
+  </div>
+
+  <!-- LANDING: game info + Check In / Match Report choice -->
+  <div id="landingView" class="card" style="display:none;">
+    <h2 id="gameTitle" style="margin-top:0; color:var(--navy);"></h2>
+    <p class="muted" id="gameSubtitle"></p>
+    <div class="landing-buttons">
+      <button onclick="showCheckIn()">Check In</button>
+      <button id="matchReportBtn" class="secondary" disabled onclick="alert('Match Report — coming in Stage 3')">Submit Match Report</button>
+    </div>
+    <p class="muted" style="margin-top:10px;" id="matchReportGateNote">Complete Check-In for at least one player before Match Report unlocks.</p>
+  </div>
+
+  <!-- CHECK-IN VIEW -->
+  <div id="checkInView" class="card" style="display:none;">
+    <a href="#" class="back-link" onclick="showLanding(); return false;">← Back</a>
+    <h2 style="margin-top:0; color:var(--navy);">Check In</h2>
+    <div class="team-columns" id="teamColumns"></div>
+  </div>
+</main>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const gameId = params.get('game');
+
+  let gameData = null;
+  let config = { maxPlayers: 18, maxStaff: 5 };
+  let checkinState = {}; // teamId:profileId -> { jerseyNumber, personType }
+
+  function showError(msg) {
+    document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('errorState').style.display = 'block';
+    document.getElementById('errorText').textContent = msg;
+  }
+
+  function showLanding() {
+    document.getElementById('checkInView').style.display = 'none';
+    document.getElementById('landingView').style.display = 'block';
+  }
+
+  async function init() {
     if (!gameId) {
-      output.innerHTML = '<p>No <code>?game=&lt;uid&gt;</code> parameter in the URL. Add one to test, e.g.:<br><code>' +
-        window.location.origin + window.location.pathname + '?game=SOME-GAME-UID</code></p>';
-    } else {
-      fetch('/api/game/' + encodeURIComponent(gameId))
-        .then(res => res.json())
-        .then(data => {
-          if (data.error) {
-            output.innerHTML = '<p style="color:red;">Error: ' + data.error + '</p>';
-            return;
-          }
-          output.innerHTML = '<h3>Event</h3><pre>' + JSON.stringify(data.event, null, 2) + '</pre>' +
-            '<h3>Teams + Rosters</h3><pre>' + JSON.stringify(data.teams, null, 2) + '</pre>';
-        })
-        .catch(err => {
-          output.innerHTML = '<p style="color:red;">Fetch failed: ' + err.message + '</p>';
-        });
+      showError('No ?game=<uid> parameter in the URL.');
+      return;
     }
-  </script>
+
+    try {
+      const [configRes, gameRes] = await Promise.all([
+        fetch('/api/config').then(r => r.json()),
+        fetch('/api/game/' + encodeURIComponent(gameId)).then(r => r.json()),
+      ]);
+
+      if (gameRes.error) { showError(gameRes.error); return; }
+
+      config = configRes;
+      gameData = gameRes;
+
+      await loadCheckinState();
+
+      document.getElementById('loadingState').style.display = 'none';
+      document.getElementById('landingView').style.display = 'block';
+
+      const teamNames = (gameData.event.eventTeams || []).map(t => t.name).join(' vs ');
+      document.getElementById('gameTitle').textContent = gameData.event.name || teamNames || 'Untitled Game';
+      const startStr = gameData.event.start ? new Date(gameData.event.start).toLocaleString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }) : '';
+      document.getElementById('gameSubtitle').textContent = [startStr, gameData.event.location && gameData.event.location.name].filter(Boolean).join(' · ');
+
+      renderCheckInTeams();
+      updateMatchReportGate();
+    } catch (e) {
+      showError('Failed to load: ' + e.message);
+    }
+  }
+
+  async function loadCheckinState() {
+    const res = await fetch('/api/checkins/' + encodeURIComponent(gameId));
+    const data = await res.json();
+    checkinState = {};
+    (data.checkins || []).forEach(c => {
+      checkinState[c.team_id + ':' + c.profile_id] = { jerseyNumber: c.jersey_number, personType: c.person_type };
+    });
+  }
+
+  function updateMatchReportGate() {
+    const anyCheckedIn = Object.keys(checkinState).length > 0;
+    document.getElementById('matchReportBtn').disabled = !anyCheckedIn;
+    document.getElementById('matchReportGateNote').style.display = anyCheckedIn ? 'none' : 'block';
+  }
+
+  function showCheckIn() {
+    document.getElementById('landingView').style.display = 'none';
+    document.getElementById('checkInView').style.display = 'block';
+  }
+
+  function renderCheckInTeams() {
+    const container = document.getElementById('teamColumns');
+    container.innerHTML = '';
+
+    gameData.teams.forEach(team => {
+      const col = document.createElement('div');
+      col.className = 'team-col';
+
+      const playerCount = countCheckedIn(team.id, 'player');
+      const staffCount = countCheckedIn(team.id, 'staff');
+
+      col.innerHTML = `
+        <h3>${escapeHtml(team.name)}</h3>
+        <div class="section-label">Players</div>
+        <div class="cap-counter" id="playerCap-${team.id}">${playerCount} of ${config.maxPlayers} checked in</div>
+        <div id="players-${team.id}"></div>
+        <div class="section-label">Staff</div>
+        <div class="cap-counter" id="staffCap-${team.id}">${staffCount} of ${config.maxStaff} checked in</div>
+        <div id="staff-${team.id}"></div>
+      `;
+      container.appendChild(col);
+
+      renderRosterList(team.id, team.name, 'players-' + team.id, team.players || [], 'player');
+      renderRosterList(team.id, team.name, 'staff-' + team.id, team.staff || [], 'staff');
+    });
+  }
+
+  function countCheckedIn(teamId, personType) {
+    return Object.entries(checkinState).filter(([key, val]) =>
+      key.startsWith(teamId + ':') && val.personType === personType
+    ).length;
+  }
+
+  function renderRosterList(teamId, teamName, containerId, people, personType) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = people.map(p => {
+      const profileId = p.profileId;
+      const name = (p.firstName + ' ' + p.lastName).trim();
+      const key = teamId + ':' + profileId;
+      const isChecked = !!checkinState[key];
+      const currentJersey = isChecked ? (checkinState[key].jerseyNumber || '') : '';
+
+      return `
+        <div class="roster-row">
+          <input type="checkbox" id="chk-${key}" ${isChecked ? 'checked' : ''}
+            onchange="onCheckToggle('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${personType}', '${escapeJs(profileId)}', '${escapeJs(name)}', this.checked)" />
+          <span class="rname">${escapeHtml(name)}</span>
+          ${personType === 'player' ? `<input type="text" maxlength="2" placeholder="#" value="${escapeHtml(currentJersey)}"
+            id="jersey-${key}" ${isChecked ? '' : 'disabled'}
+            onchange="onJerseyChange('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${profileId}', '${escapeJs(name)}')" />` : ''}
+        </div>`;
+    }).join('') || '<p class="muted">No roster listed.</p>';
+  }
+
+  async function onCheckToggle(teamId, teamName, personType, profileId, name, isChecked) {
+    const checkboxEl = document.getElementById('chk-' + teamId + ':' + profileId);
+    const jerseyEl = document.getElementById('jersey-' + teamId + ':' + profileId);
+
+    if (isChecked) {
+      const jerseyNumber = jerseyEl ? jerseyEl.value.trim() : null;
+      const ok = await submitCheckin(teamId, teamName, personType, profileId, name, jerseyNumber, 'add');
+      if (!ok) {
+        checkboxEl.checked = false; // revert on failure (e.g. cap reached)
+        return;
+      }
+      if (jerseyEl) jerseyEl.disabled = false;
+      checkinState[teamId + ':' + profileId] = { jerseyNumber, personType };
+    } else {
+      await submitCheckin(teamId, teamName, personType, profileId, name, null, 'remove');
+      if (jerseyEl) { jerseyEl.disabled = true; jerseyEl.value = ''; }
+      delete checkinState[teamId + ':' + profileId];
+    }
+
+    refreshCounters(teamId);
+    updateMatchReportGate();
+  }
+
+  async function onJerseyChange(teamId, teamName, profileId, name) {
+    const key = teamId + ':' + profileId;
+    if (!checkinState[key]) return; // not checked in, nothing to update
+    const jerseyEl = document.getElementById('jersey-' + key);
+    const jerseyNumber = jerseyEl.value.trim();
+    await submitCheckin(teamId, teamName, 'player', profileId, name, jerseyNumber, 'add'); // 'add' also handles updates via upsert
+    checkinState[key].jerseyNumber = jerseyNumber;
+  }
+
+  async function submitCheckin(teamId, teamName, personType, profileId, name, jerseyNumber, action) {
+    try {
+      const res = await fetch('/api/checkin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId, teamId, teamName, personType, profileId, name, jerseyNumber, action }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        alert(json.error || 'Check-in failed.');
+        return false;
+      }
+      return true;
+    } catch (e) {
+      alert('Network error: ' + e.message);
+      return false;
+    }
+  }
+
+  function refreshCounters(teamId) {
+    const playerCount = countCheckedIn(teamId, 'player');
+    const staffCount = countCheckedIn(teamId, 'staff');
+
+    const playerCapEl = document.getElementById('playerCap-' + teamId);
+    playerCapEl.textContent = playerCount + ' of ' + config.maxPlayers + ' checked in';
+    playerCapEl.classList.toggle('at-cap', playerCount >= config.maxPlayers);
+
+    const staffCapEl = document.getElementById('staffCap-' + teamId);
+    staffCapEl.textContent = staffCount + ' of ' + config.maxStaff + ' checked in';
+    staffCapEl.classList.toggle('at-cap', staffCount >= config.maxStaff);
+
+    document.querySelectorAll(`#players-${teamId} input[type="checkbox"]`).forEach(cb => {
+      if (!cb.checked) cb.disabled = playerCount >= config.maxPlayers;
+    });
+    document.querySelectorAll(`#staff-${teamId} input[type="checkbox"]`).forEach(cb => {
+      if (!cb.checked) cb.disabled = staffCount >= config.maxStaff;
+    });
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function escapeJs(str) {
+    return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  }
+
+  init();
+</script>
 </body>
 </html>
