@@ -2,6 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>USCCS Match Day</title>
   <style>
     :root {
@@ -9,18 +10,21 @@
       --bg: #F4F6FA; --border: #E1E5EC; --gray: #5A6472; --danger: #C0392B; --success: #1F7A4D;
     }
     * { box-sizing: border-box; }
-    body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg); margin: 0; color: #1a1a1a; }
+    body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg); margin: 0; color: #1a1a1a; -webkit-tap-highlight-color: transparent; }
     header { background: var(--navy); color: var(--gold); padding: 14px 20px; font-weight: 700; font-size: 18px; }
     main { max-width: 800px; margin: 0 auto; padding: 20px; }
+    @media (max-width: 480px) { main { padding: 12px; } }
     .card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+    @media (max-width: 480px) { .card { padding: 14px; border-radius: 8px; } }
     .muted { color: var(--gray); font-size: 13px; }
     .err { color: var(--danger); font-size: 13px; margin-top: 6px; }
-    button { padding: 10px 16px; border-radius: 8px; border: none; background: var(--navy); color: #fff; font-weight: 600; cursor: pointer; font-size: 14px; }
+    button { padding: 12px 18px; min-height: 46px; border-radius: 8px; border: none; background: var(--navy); color: #fff; font-weight: 600; cursor: pointer; font-size: 14.5px; }
     button.secondary { background: #fff; color: var(--navy); border: 1px solid var(--border); }
     button:disabled { opacity: .4; cursor: not-allowed; }
     button:hover:not(:disabled) { opacity: .9; }
     .landing-buttons { display: flex; gap: 12px; margin-top: 14px; }
     .landing-buttons button { flex: 1; padding: 20px; font-size: 16px; }
+    @media (max-width: 480px) { .landing-buttons { flex-direction: column; } }
     .team-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     @media (max-width: 650px) { .team-columns { grid-template-columns: 1fr; } }
     .team-col h3 { margin: 0 0 4px; color: var(--navy); }
@@ -28,31 +32,31 @@
     .cap-counter.at-cap { color: var(--danger); font-weight: 600; }
     .done-banner { background: #E9F6EE; border: 1px solid var(--success); border-radius: 8px; padding: 16px; text-align: center; }
 
-    .team-select-tile { flex: 1; border: 2px solid var(--border); border-radius: 10px; padding: 16px; text-align: center; cursor: pointer; user-select: none; }
+    .team-select-tile { flex: 1; border: 2px solid var(--border); border-radius: 10px; padding: 18px 16px; text-align: center; cursor: pointer; user-select: none; min-height: 46px; display: flex; align-items: center; justify-content: center; }
     .team-select-tile.selected { border-color: var(--navy); background: #F4F9FD; }
     .team-select-tile .tname { font-weight: 700; color: var(--navy); font-size: 15px; }
-    .roster-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
-    .roster-row input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; }
-    .roster-row .rname { flex: 1; font-size: 14px; }
-    .roster-row input[type="text"] { width: 46px; padding: 5px; border: 1px solid var(--border); border-radius: 5px; text-align: center; font-size: 13px; }
+    .roster-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); min-height: 44px; }
+    .roster-row input[type="checkbox"] { width: 24px; height: 24px; flex-shrink: 0; }
+    .roster-row .rname { flex: 1; font-size: 14.5px; }
+    .roster-row input[type="text"] { width: 52px; padding: 10px 4px; border: 1px solid var(--border); border-radius: 6px; text-align: center; font-size: 16px; min-height: 40px; }
     .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--gray); margin: 14px 0 4px; }
-    .back-link { display: inline-block; margin-bottom: 14px; color: var(--navy); text-decoration: none; font-size: 13px; }
+    .back-link { display: inline-block; margin-bottom: 14px; color: var(--navy); text-decoration: none; font-size: 13px; padding: 6px 0; }
     .back-link:hover { text-decoration: underline; }
 
-    .modal-overlay { position: fixed; inset: 0; background: rgba(17,33,63,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-    .modal-box { background: #fff; border-radius: 10px; padding: 20px; width: 90%; max-width: 420px; max-height: 80vh; overflow-y: auto; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(17,33,63,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
+    .modal-box { background: #fff; border-radius: 10px; padding: 20px; width: 100%; max-width: 420px; max-height: 85vh; overflow-y: auto; }
     .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .modal-header h3 { margin: 0; color: var(--navy); font-size: 16px; }
-    .option { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; cursor: pointer; }
+    .option { padding: 13px 14px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; cursor: pointer; min-height: 44px; }
     .option:hover { border-color: var(--blue); background: #F4F9FD; }
 
     .score-input-row { display: flex; align-items: center; gap: 10px; }
-    .score-input-row input { width: 70px; padding: 10px; font-size: 20px; text-align: center; border: 1px solid var(--border); border-radius: 8px; }
+    .score-input-row input { width: 76px; padding: 12px; font-size: 22px; text-align: center; border: 1px solid var(--border); border-radius: 8px; min-height: 46px; }
 
     .report-section { margin-top: 12px; }
     .report-section h4 { margin: 0 0 6px; font-size: 13px; color: var(--gray); text-transform: uppercase; letter-spacing: .03em; }
-    .report-entry { display: flex; align-items: center; justify-content: space-between; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; font-size: 13.5px; }
-    .report-entry button { padding: 1px 7px; font-size: 12px; background: transparent; color: var(--danger); border: none; }
+    .report-entry { display: flex; align-items: center; justify-content: space-between; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-bottom: 6px; font-size: 14px; min-height: 40px; }
+    .report-entry button { padding: 6px 12px; font-size: 13px; background: transparent; color: var(--danger); border: none; min-height: 32px; }
     .add-event-btn { width: 100%; margin-top: 4px; }
   </style>
 </head>
@@ -131,6 +135,8 @@
 
   function showLanding() {
     document.getElementById('checkInView').style.display = 'none';
+    document.getElementById('matchReportView').style.display = 'none';
+    closeReportPicker(); // force-close in case a picker modal was left open
     document.getElementById('landingView').style.display = 'block';
   }
 
@@ -185,6 +191,8 @@
 
   function showCheckIn() {
     document.getElementById('landingView').style.display = 'none';
+    document.getElementById('matchReportView').style.display = 'none';
+    closeReportPicker();
     document.getElementById('checkInView').style.display = 'block';
     renderTeamSelector();
   }
@@ -275,7 +283,7 @@
       const currentJersey = isChecked ? (checkinState[key].jerseyNumber || '') : '';
 
       const control = personType === 'player'
-        ? `<input type="text" maxlength="2" placeholder="#" value="${escapeHtml(currentJersey)}"
+        ? `<input type="text" inputmode="numeric" maxlength="2" placeholder="#" value="${escapeHtml(currentJersey)}"
              id="jersey-${key}"
              onchange="onPlayerJerseyInput('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${escapeJs(profileId)}', '${escapeJs(name)}')" />`
         : `<input type="checkbox" id="chk-${key}" ${isChecked ? 'checked' : ''}
@@ -411,6 +419,7 @@
 
   function showMatchReport() {
     document.getElementById('landingView').style.display = 'none';
+    document.getElementById('checkInView').style.display = 'none';
     document.getElementById('matchReportView').style.display = 'block';
     renderScoreInputs();
     renderReportColumns();
@@ -423,7 +432,7 @@
         <h3 style="color:var(--navy); margin-bottom:6px;">${escapeHtml(team.name)}</h3>
         <div class="score-input-row">
           <span class="muted">Score:</span>
-          <input type="number" min="0" id="score-${team.id}" value="${reportScores[team.id] != null ? reportScores[team.id] : ''}" />
+          <input type="number" inputmode="numeric" min="0" id="score-${team.id}" value="${reportScores[team.id] != null ? reportScores[team.id] : ''}" />
         </div>
       </div>
     `).join('');
@@ -514,7 +523,7 @@
     listEl.innerHTML = `
       <a href="#" onclick="renderReportPickerPersonList(); return false;" class="back-link">← Back to list</a>
       <p class="muted" style="margin-bottom:10px;"><strong>${escapeHtml(activeReportPicker.pendingPerson.name)}</strong> — enter minute (optional)</p>
-      <input type="number" min="0" id="minuteInput" placeholder="Minute" style="width:100%; padding:10px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px;" />
+      <input type="number" inputmode="numeric" min="0" id="minuteInput" placeholder="Minute" style="width:100%; padding:12px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px; min-height:46px; font-size:16px;" />
       <button style="width:100%;" onclick="confirmReportEntry()">Add</button>
     `;
   }
