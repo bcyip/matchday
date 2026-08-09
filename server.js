@@ -319,7 +319,131 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Stage 3 will add: GET/POST /api/match-report
+  // GET /api/match-report/:gameId — read back an existing submitted report, if any
+  const matchReportGetMatch = url.pathname.match(/^\/api\/match-report\/([^/]+)$/);
+  if (req.method === 'GET' && matchReportGetMatch) {
+    const gameId = decodeURIComponent(matchReportGetMatch[1]);
+    try {
+      const scoresResult = await pool.query('SELECT * FROM match_report_scores WHERE game_id = $1', [gameId]);
+      const entriesResult = await pool.query(
+        'SELECT team_id, team_name, person_type, profile_id, name, event_type, minute FROM match_report_entries WHERE game_id = $1 ORDER BY minute NULLS LAST',
+        [gameId]
+      );
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ scores: scoresResult.rows[0] || null, entries: entriesResult.rows }));
+    } catch (err) {
+      console.error('[api/match-report GET] Error:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // POST /api/match-report — the big submit: saves to Postgres, then pushes
+  // the final score to SportsEngine via the real updateScore mutation.
+  if (req.method === 'POST' && url.pathname === '/api/match-report') {
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', async () => {
+      let payload;
+      try {
+        payload = JSON.parse(body);
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+      }
+
+      const { gameId, team1, team2, entries } = payload;
+
+      // --- Validation ---
+      if (!gameId || !team1 || !team2 || !Array.isArray(entries)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Missing gameId, team1, team2, or entries.' }));
+      }
+      for (const t of [team1, team2]) {
+        if (!t.id || !t.name || !Number.isInteger(t.score) || t.score < 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Each team needs id, name, and a non-negative integer score.' }));
+        }
+      }
+      const VALID_EVENT_TYPES = ['Goal', 'Yellow Card', 'Red Card'];
+      for (const e of entries) {
+        if (!e.teamId || !e.teamName || !e.personType || !e.profileId || !e.name || !VALID_EVENT_TYPES.includes(e.eventType)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Each entry needs teamId, teamName, personType, profileId, name, and a valid eventType.' }));
+        }
+        if (e.minute != null && (!Number.isInteger(e.minute) || e.minute < 0)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'minute must be a non-negative integer or null.' }));
+        }
+      }
+
+      // --- Save to Postgres first (our own data, fully under our control).
+      // Scores are upserted (a resubmission corrects the prior one); entries
+      // are fully replaced for this game (the submission is the authoritative
+      // complete set, not an incremental add). ---
+      const client = await pool.connect();
+      let postgresSaved = false;
+      try {
+        await client.query('BEGIN');
+
+        await client.query(
+          `INSERT INTO match_report_scores (game_id, team1_id, team1_name, team1_score, team2_id, team2_name, team2_score, submitted_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+           ON CONFLICT (game_id) DO UPDATE SET
+             team1_id = EXCLUDED.team1_id, team1_name = EXCLUDED.team1_name, team1_score = EXCLUDED.team1_score,
+             team2_id = EXCLUDED.team2_id, team2_name = EXCLUDED.team2_name, team2_score = EXCLUDED.team2_score,
+             submitted_at = now()`,
+          [gameId, team1.id, team1.name, team1.score, team2.id, team2.name, team2.score]
+        );
+
+        await client.query('DELETE FROM match_report_entries WHERE game_id = $1', [gameId]);
+        for (const e of entries) {
+          await client.query(
+            `INSERT INTO match_report_entries (game_id, team_id, team_name, person_type, profile_id, name, event_type, minute, submitted_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
+            [gameId, e.teamId, e.teamName, e.personType, e.profileId, e.name, e.eventType, e.minute ?? null]
+          );
+        }
+
+        await client.query('COMMIT');
+        postgresSaved = true;
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {}); // don't let a rollback failure mask the real error
+        console.error('[api/match-report POST] Postgres error:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Failed to save report: ' + err.message }));
+      } finally {
+        client.release();
+      }
+
+      // --- Push the score to SportsEngine. This is reported separately from
+      // the Postgres save above, since the two are different systems with no
+      // shared transaction - if this fails, the detailed report is still
+      // safely saved and the score push can be retried without re-entering
+      // everything. ---
+      let scoreUpdated = false;
+      let scoreError = null;
+      try {
+        const mutation = `
+          mutation UpdateScore($eventId: ID!, $s1: String!, $s2: String!) {
+            updateScore(eventId: $eventId, scoreTeam1: $s1, scoreTeam2: $s2) {
+              name
+              eventTeams { name score }
+            }
+          }`;
+        await callGraphQL(mutation, { eventId: gameId, s1: String(team1.score), s2: String(team2.score) });
+        scoreUpdated = true;
+      } catch (err) {
+        console.error('[api/match-report POST] updateScore error:', err.message);
+        scoreError = err.message;
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, postgresSaved, scoreUpdated, scoreError }));
+    });
+    return;
+  }
 
   if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
     fs.readFile(HTML_FILE, 'utf8', (err, data) => {
