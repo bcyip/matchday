@@ -31,8 +31,6 @@
     .team-select-tile { flex: 1; border: 2px solid var(--border); border-radius: 10px; padding: 16px; text-align: center; cursor: pointer; user-select: none; }
     .team-select-tile.selected { border-color: var(--navy); background: #F4F9FD; }
     .team-select-tile .tname { font-weight: 700; color: var(--navy); font-size: 15px; }
-    .team-tab { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: #fff; color: var(--navy); font-weight: 600; cursor: pointer; font-size: 13.5px; }
-    .team-tab.active { background: var(--navy); color: #fff; border-color: var(--navy); }
     .roster-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
     .roster-row input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; }
     .roster-row .rname { flex: 1; font-size: 14px; }
@@ -87,10 +85,9 @@
     <a href="#" class="back-link" onclick="showLanding(); return false;">← Back</a>
     <h2 style="margin-top:0; color:var(--navy);">Check In</h2>
 
-    <div class="section-label">Which team(s) are you checking in?</div>
+    <div class="section-label">Select a team</div>
     <div id="teamSelector" style="display:flex; gap:10px; margin-bottom:16px;"></div>
 
-    <div id="teamTabs" style="display:none; gap:8px; margin-bottom:14px;"></div>
     <div id="activeTeamRoster"></div>
   </div>
 
@@ -193,54 +190,24 @@
   }
 
   let teamDoneState = {}; // teamId -> boolean, purely a UI signal - check-in data itself stays editable regardless
-  let selectedCheckinTeamIds = []; // which team(s) are in scope for this check-in session
-  let activeCheckinTeamId = null; // which selected team's roster is currently visible
+  let activeCheckinTeamId = null; // which team's roster is currently visible - only ever one at a time
 
+  // The tiles ARE the switcher — clicking one shows that team's roster now,
+  // clicking the other switches to it. No separate selection step or tabs.
   function renderTeamSelector() {
     const container = document.getElementById('teamSelector');
     container.innerHTML = gameData.teams.map(team => `
-      <div class="team-select-tile ${selectedCheckinTeamIds.includes(team.id) ? 'selected' : ''}"
-        onclick="toggleTeamSelection('${escapeJs(team.id)}')">
+      <div class="team-select-tile ${activeCheckinTeamId === team.id ? 'selected' : ''}"
+        onclick="selectActiveTeam('${escapeJs(team.id)}')">
         <div class="tname">${escapeHtml(team.name)}</div>
       </div>
     `).join('');
-    renderTeamTabs();
     renderActiveRoster();
   }
 
-  function toggleTeamSelection(teamId) {
-    const idx = selectedCheckinTeamIds.indexOf(teamId);
-    if (idx === -1) {
-      selectedCheckinTeamIds.push(teamId);
-    } else {
-      selectedCheckinTeamIds.splice(idx, 1);
-      if (activeCheckinTeamId === teamId) activeCheckinTeamId = null;
-    }
-    if (!activeCheckinTeamId && selectedCheckinTeamIds.length) {
-      activeCheckinTeamId = selectedCheckinTeamIds[0];
-    }
-    renderTeamSelector();
-  }
-
-  // Only shows tabs (a switcher) when BOTH teams are selected - with just
-  // one selected there's nothing to switch between, so no tabs are needed.
-  function renderTeamTabs() {
-    const tabsEl = document.getElementById('teamTabs');
-    if (selectedCheckinTeamIds.length < 2) {
-      tabsEl.style.display = 'none';
-      return;
-    }
-    tabsEl.style.display = 'flex';
-    tabsEl.innerHTML = selectedCheckinTeamIds.map(teamId => {
-      const team = gameData.teams.find(t => t.id === teamId);
-      return `<button class="team-tab ${activeCheckinTeamId === teamId ? 'active' : ''}" onclick="switchActiveTeam('${escapeJs(teamId)}')">${escapeHtml(team.name)}</button>`;
-    }).join('');
-  }
-
-  function switchActiveTeam(teamId) {
+  function selectActiveTeam(teamId) {
     activeCheckinTeamId = teamId;
-    renderTeamTabs();
-    renderActiveRoster();
+    renderTeamSelector();
   }
 
   // Renders ONLY the currently active team's roster - never both at once,
@@ -269,17 +236,17 @@
 
     container.innerHTML = `
       <p class="muted" style="margin-top:0;">Enter a player's jersey number to check them in. Clear the number to remove them.</p>
-      <div class="section-label">Players</div>
-      <div class="cap-counter" id="playerCap-${team.id}">${playerCount} of ${config.maxPlayers} checked in</div>
-      <div id="players-${team.id}"></div>
       <div class="section-label">Staff</div>
       <div class="cap-counter" id="staffCap-${team.id}">${staffCount} of ${config.maxStaff} checked in</div>
       <div id="staff-${team.id}"></div>
+      <div class="section-label">Players</div>
+      <div class="cap-counter" id="playerCap-${team.id}">${playerCount} of ${config.maxPlayers} checked in</div>
+      <div id="players-${team.id}"></div>
       <button style="width:100%; margin-top:14px;" onclick="markTeamDone('${escapeJs(team.id)}')">Done — ${escapeHtml(team.name)} Check-In Complete</button>
     `;
 
-    renderRosterList(team.id, team.name, 'players-' + team.id, team.players || [], 'player');
     renderRosterList(team.id, team.name, 'staff-' + team.id, team.staff || [], 'staff');
+    renderRosterList(team.id, team.name, 'players-' + team.id, team.players || [], 'player');
   }
 
   function markTeamDone(teamId) {
