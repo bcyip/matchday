@@ -284,13 +284,12 @@
       return `
         <div>
           <div class="roster-row">
-            ${personType === 'staff' ? control : ''}
+            ${control}
             <span class="rname">${escapeHtml(name)}</span>
-            ${personType === 'player' ? control : ''}
           </div>
           <div class="row-error" id="err-${key}" style="display:none; color:var(--danger); font-size:11.5px; margin:-4px 0 4px;"></div>
         </div>`;
-    }).join('') || '<p class="muted">No roster listed.</p>';
+    }).join('') || `<p class="muted">No ${personType === 'staff' ? 'coaches' : 'players'} rostered.</p>`;
   }
 
   // Players: entering a jersey number IS the check-in action - no separate
