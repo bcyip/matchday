@@ -27,6 +27,12 @@
     .cap-counter { font-size: 12.5px; color: var(--gray); margin-bottom: 10px; }
     .cap-counter.at-cap { color: var(--danger); font-weight: 600; }
     .done-banner { background: #E9F6EE; border: 1px solid var(--success); border-radius: 8px; padding: 16px; text-align: center; }
+
+    .team-select-tile { flex: 1; border: 2px solid var(--border); border-radius: 10px; padding: 16px; text-align: center; cursor: pointer; user-select: none; }
+    .team-select-tile.selected { border-color: var(--navy); background: #F4F9FD; }
+    .team-select-tile .tname { font-weight: 700; color: var(--navy); font-size: 15px; }
+    .team-tab { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: #fff; color: var(--navy); font-weight: 600; cursor: pointer; font-size: 13.5px; }
+    .team-tab.active { background: var(--navy); color: #fff; border-color: var(--navy); }
     .roster-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
     .roster-row input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; }
     .roster-row .rname { flex: 1; font-size: 14px; }
@@ -80,7 +86,12 @@
   <div id="checkInView" class="card" style="display:none;">
     <a href="#" class="back-link" onclick="showLanding(); return false;">← Back</a>
     <h2 style="margin-top:0; color:var(--navy);">Check In</h2>
-    <div class="team-columns" id="teamColumns"></div>
+
+    <div class="section-label">Which team(s) are you checking in?</div>
+    <div id="teamSelector" style="display:flex; gap:10px; margin-bottom:16px;"></div>
+
+    <div id="teamTabs" style="display:none; gap:8px; margin-bottom:14px;"></div>
+    <div id="activeTeamRoster"></div>
   </div>
 
   <!-- MATCH REPORT VIEW -->
@@ -154,7 +165,6 @@
       const startStr = gameData.event.start ? new Date(gameData.event.start).toLocaleString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }) : '';
       document.getElementById('gameSubtitle').textContent = [startStr, gameData.event.location && gameData.event.location.name].filter(Boolean).join(' · ');
 
-      renderCheckInTeams();
       updateMatchReportGate();
     } catch (e) {
       showError('Failed to load: ' + e.message);
@@ -179,33 +189,77 @@
   function showCheckIn() {
     document.getElementById('landingView').style.display = 'none';
     document.getElementById('checkInView').style.display = 'block';
+    renderTeamSelector();
   }
 
   let teamDoneState = {}; // teamId -> boolean, purely a UI signal - check-in data itself stays editable regardless
+  let selectedCheckinTeamIds = []; // which team(s) are in scope for this check-in session
+  let activeCheckinTeamId = null; // which selected team's roster is currently visible
 
-  function renderCheckInTeams() {
-    const container = document.getElementById('teamColumns');
-    container.innerHTML = '';
-
-    gameData.teams.forEach(team => {
-      const col = document.createElement('div');
-      col.className = 'team-col';
-      col.id = 'teamCol-' + team.id;
-      container.appendChild(col);
-      renderTeamColumn(team);
-    });
+  function renderTeamSelector() {
+    const container = document.getElementById('teamSelector');
+    container.innerHTML = gameData.teams.map(team => `
+      <div class="team-select-tile ${selectedCheckinTeamIds.includes(team.id) ? 'selected' : ''}"
+        onclick="toggleTeamSelection('${escapeJs(team.id)}')">
+        <div class="tname">${escapeHtml(team.name)}</div>
+      </div>
+    `).join('');
+    renderTeamTabs();
+    renderActiveRoster();
   }
 
-  function renderTeamColumn(team) {
-    const col = document.getElementById('teamCol-' + team.id);
+  function toggleTeamSelection(teamId) {
+    const idx = selectedCheckinTeamIds.indexOf(teamId);
+    if (idx === -1) {
+      selectedCheckinTeamIds.push(teamId);
+    } else {
+      selectedCheckinTeamIds.splice(idx, 1);
+      if (activeCheckinTeamId === teamId) activeCheckinTeamId = null;
+    }
+    if (!activeCheckinTeamId && selectedCheckinTeamIds.length) {
+      activeCheckinTeamId = selectedCheckinTeamIds[0];
+    }
+    renderTeamSelector();
+  }
+
+  // Only shows tabs (a switcher) when BOTH teams are selected - with just
+  // one selected there's nothing to switch between, so no tabs are needed.
+  function renderTeamTabs() {
+    const tabsEl = document.getElementById('teamTabs');
+    if (selectedCheckinTeamIds.length < 2) {
+      tabsEl.style.display = 'none';
+      return;
+    }
+    tabsEl.style.display = 'flex';
+    tabsEl.innerHTML = selectedCheckinTeamIds.map(teamId => {
+      const team = gameData.teams.find(t => t.id === teamId);
+      return `<button class="team-tab ${activeCheckinTeamId === teamId ? 'active' : ''}" onclick="switchActiveTeam('${escapeJs(teamId)}')">${escapeHtml(team.name)}</button>`;
+    }).join('');
+  }
+
+  function switchActiveTeam(teamId) {
+    activeCheckinTeamId = teamId;
+    renderTeamTabs();
+    renderActiveRoster();
+  }
+
+  // Renders ONLY the currently active team's roster - never both at once,
+  // even when both teams are selected (use the tabs above to switch).
+  function renderActiveRoster() {
+    const container = document.getElementById('activeTeamRoster');
+    if (!activeCheckinTeamId) {
+      container.innerHTML = '<p class="muted">Select a team above to begin check-in.</p>';
+      return;
+    }
+
+    const team = gameData.teams.find(t => t.id === activeCheckinTeamId);
     const playerCount = countCheckedIn(team.id, 'player');
     const staffCount = countCheckedIn(team.id, 'staff');
 
     if (teamDoneState[team.id]) {
-      col.innerHTML = `
-        <h3>${escapeHtml(team.name)}</h3>
+      container.innerHTML = `
         <div class="done-banner">
-          <div style="font-size:15px; font-weight:700; color:var(--success);">✓ Check-In Complete</div>
+          <div style="font-size:15px; font-weight:700; color:var(--success);">✓ Check-In Complete — ${escapeHtml(team.name)}</div>
           <div class="muted" style="margin:4px 0 10px;">${playerCount} players, ${staffCount} staff checked in.</div>
           <button class="secondary" onclick="editTeamCheckin('${escapeJs(team.id)}')">Edit</button>
         </div>
@@ -213,8 +267,8 @@
       return;
     }
 
-    col.innerHTML = `
-      <h3>${escapeHtml(team.name)}</h3>
+    container.innerHTML = `
+      <p class="muted" style="margin-top:0;">Enter a player's jersey number to check them in. Clear the number to remove them.</p>
       <div class="section-label">Players</div>
       <div class="cap-counter" id="playerCap-${team.id}">${playerCount} of ${config.maxPlayers} checked in</div>
       <div id="players-${team.id}"></div>
@@ -230,12 +284,12 @@
 
   function markTeamDone(teamId) {
     teamDoneState[teamId] = true;
-    renderTeamColumn(gameData.teams.find(t => t.id === teamId));
+    renderActiveRoster();
   }
 
   function editTeamCheckin(teamId) {
     teamDoneState[teamId] = false;
-    renderTeamColumn(gameData.teams.find(t => t.id === teamId));
+    renderActiveRoster();
   }
 
   function countCheckedIn(teamId, personType) {
@@ -253,46 +307,45 @@
       const isChecked = !!checkinState[key];
       const currentJersey = isChecked ? (checkinState[key].jerseyNumber || '') : '';
 
+      const control = personType === 'player'
+        ? `<input type="text" maxlength="2" placeholder="#" value="${escapeHtml(currentJersey)}"
+             id="jersey-${key}"
+             onchange="onPlayerJerseyInput('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${escapeJs(profileId)}', '${escapeJs(name)}')" />`
+        : `<input type="checkbox" id="chk-${key}" ${isChecked ? 'checked' : ''}
+             onchange="onStaffCheckToggle('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${escapeJs(profileId)}', '${escapeJs(name)}', this.checked)" />`;
+
       return `
         <div>
           <div class="roster-row">
-            <input type="checkbox" id="chk-${key}" ${isChecked ? 'checked' : ''}
-              onchange="onCheckToggle('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${personType}', '${escapeJs(profileId)}', '${escapeJs(name)}', this.checked)" />
+            ${personType === 'staff' ? control : ''}
             <span class="rname">${escapeHtml(name)}</span>
-            ${personType === 'player' ? `<input type="text" maxlength="2" placeholder="#" value="${escapeHtml(currentJersey)}"
-              id="jersey-${key}"
-              onchange="onJerseyChange('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${escapeJs(profileId)}', '${escapeJs(name)}')" />` : ''}
+            ${personType === 'player' ? control : ''}
           </div>
           <div class="row-error" id="err-${key}" style="display:none; color:var(--danger); font-size:11.5px; margin:-4px 0 4px;"></div>
         </div>`;
     }).join('') || '<p class="muted">No roster listed.</p>';
   }
 
-  async function onCheckToggle(teamId, teamName, personType, profileId, name, isChecked) {
+  // Players: entering a jersey number IS the check-in action - no separate
+  // checkbox. Clearing the number removes them.
+  async function onPlayerJerseyInput(teamId, teamName, profileId, name) {
     const key = teamId + ':' + profileId;
-    const checkboxEl = document.getElementById('chk-' + key);
     const jerseyEl = document.getElementById('jersey-' + key);
     const errEl = document.getElementById('err-' + key);
+    const jerseyNumber = jerseyEl.value.trim();
     if (errEl) errEl.style.display = 'none';
 
-    if (isChecked) {
-      const jerseyNumber = jerseyEl ? jerseyEl.value.trim() : null;
+    const wasCheckedIn = !!checkinState[key];
 
-      if (personType === 'player' && !jerseyNumber) {
-        checkboxEl.checked = false; // revert - can't check in a player without a jersey number
-        if (errEl) { errEl.textContent = 'Enter a jersey number before checking in.'; errEl.style.display = 'block'; }
-        if (jerseyEl) jerseyEl.focus();
-        return;
-      }
-
-      const ok = await submitCheckin(teamId, teamName, personType, profileId, name, jerseyNumber, 'add');
+    if (jerseyNumber) {
+      const ok = await submitCheckin(teamId, teamName, 'player', profileId, name, jerseyNumber, 'add');
       if (!ok) {
-        checkboxEl.checked = false; // revert on failure (e.g. cap reached)
+        jerseyEl.value = wasCheckedIn ? checkinState[key].jerseyNumber : ''; // revert on failure (e.g. cap reached)
         return;
       }
-      checkinState[key] = { jerseyNumber, personType, name };
-    } else {
-      await submitCheckin(teamId, teamName, personType, profileId, name, null, 'remove');
+      checkinState[key] = { jerseyNumber, personType: 'player', name };
+    } else if (wasCheckedIn) {
+      await submitCheckin(teamId, teamName, 'player', profileId, name, null, 'remove');
       delete checkinState[key];
     }
 
@@ -300,27 +353,25 @@
     updateMatchReportGate();
   }
 
-  async function onJerseyChange(teamId, teamName, profileId, name) {
+  // Staff: unchanged simple checkbox toggle - no jersey number concept for them.
+  async function onStaffCheckToggle(teamId, teamName, profileId, name, isChecked) {
     const key = teamId + ':' + profileId;
-    if (!checkinState[key]) return; // not checked in, nothing to update
-    const jerseyEl = document.getElementById('jersey-' + key);
-    const jerseyNumber = jerseyEl.value.trim();
-    const errEl = document.getElementById('err-' + key);
+    const checkboxEl = document.getElementById('chk-' + key);
 
-    if (!jerseyNumber) {
-      // Clearing the jersey number un-checks them — a checked-in player must
-      // always have one.
-      await submitCheckin(teamId, teamName, 'player', profileId, name, null, 'remove');
+    if (isChecked) {
+      const ok = await submitCheckin(teamId, teamName, 'staff', profileId, name, null, 'add');
+      if (!ok) {
+        checkboxEl.checked = false; // revert on failure (e.g. cap reached)
+        return;
+      }
+      checkinState[key] = { jerseyNumber: null, personType: 'staff', name };
+    } else {
+      await submitCheckin(teamId, teamName, 'staff', profileId, name, null, 'remove');
       delete checkinState[key];
-      document.getElementById('chk-' + key).checked = false;
-      if (errEl) { errEl.textContent = 'Jersey number cleared — player un-checked. Re-check with a number to check them back in.'; errEl.style.display = 'block'; }
-      refreshCounters(teamId);
-      updateMatchReportGate();
-      return;
     }
 
-    await submitCheckin(teamId, teamName, 'player', profileId, name, jerseyNumber, 'add'); // 'add' also handles updates via upsert
-    checkinState[key].jerseyNumber = jerseyNumber;
+    refreshCounters(teamId);
+    updateMatchReportGate();
   }
 
   async function submitCheckin(teamId, teamName, personType, profileId, name, jerseyNumber, action) {
@@ -354,8 +405,11 @@
     staffCapEl.textContent = staffCount + ' of ' + config.maxStaff + ' checked in';
     staffCapEl.classList.toggle('at-cap', staffCount >= config.maxStaff);
 
-    document.querySelectorAll(`#players-${teamId} input[type="checkbox"]`).forEach(cb => {
-      if (!cb.checked) cb.disabled = playerCount >= config.maxPlayers;
+    // Once a team hits its cap, disable only the still-empty jersey fields
+    // (new check-ins) - fields that already have a number stay editable so
+    // existing entries can still be corrected or cleared.
+    document.querySelectorAll(`#players-${teamId} input[type="text"]`).forEach(inp => {
+      if (!inp.value.trim()) inp.disabled = playerCount >= config.maxPlayers;
     });
     document.querySelectorAll(`#staff-${teamId} input[type="checkbox"]`).forEach(cb => {
       if (!cb.checked) cb.disabled = staffCount >= config.maxStaff;
