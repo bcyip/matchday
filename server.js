@@ -204,22 +204,65 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // GET /api/checkins/:gameId — current check-in state for this game (both teams)
+  // GET /api/checkins/:gameId — current check-in state for this game (both teams), plus per-team completion status
   const checkinsGetMatch = url.pathname.match(/^\/api\/checkins\/([^/]+)$/);
   if (req.method === 'GET' && checkinsGetMatch) {
     const gameId = decodeURIComponent(checkinsGetMatch[1]);
     try {
-      const result = await pool.query(
-        'SELECT game_id, team_id, team_name, person_type, profile_id, name, jersey_number FROM checkins WHERE game_id = $1 ORDER BY team_id, person_type, name',
-        [gameId]
-      );
+      const [checkinsResult, completionResult] = await Promise.all([
+        pool.query(
+          'SELECT game_id, team_id, team_name, person_type, profile_id, name, jersey_number FROM checkins WHERE game_id = $1 ORDER BY team_id, person_type, name',
+          [gameId]
+        ),
+        pool.query('SELECT team_id FROM checkin_completion WHERE game_id = $1 AND completed = true', [gameId]),
+      ]);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ checkins: result.rows }));
+      res.end(JSON.stringify({
+        checkins: checkinsResult.rows,
+        completedTeamIds: completionResult.rows.map(r => r.team_id),
+      }));
     } catch (err) {
       console.error('[api/checkins GET] Error:', err.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     }
+    return;
+  }
+
+  // POST /api/checkin-complete — mark (or unmark) a team's check-in as done.
+  // A persisted flag, not just client-side state, so reloading the page or
+  // coming back later correctly shows the team as already checked in.
+  if (req.method === 'POST' && url.pathname === '/api/checkin-complete') {
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', async () => {
+      let payload;
+      try {
+        payload = JSON.parse(body);
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+      }
+      const { gameId, teamId, teamName, completed } = payload;
+      if (!gameId || !teamId || !teamName || typeof completed !== 'boolean') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Missing gameId, teamId, teamName, or completed (boolean).' }));
+      }
+      try {
+        await pool.query(
+          `INSERT INTO checkin_completion (game_id, team_id, team_name, completed, completed_at)
+           VALUES ($1, $2, $3, $4, now())
+           ON CONFLICT (game_id, team_id) DO UPDATE SET completed = EXCLUDED.completed, completed_at = now(), team_name = EXCLUDED.team_name`,
+          [gameId, teamId, teamName, completed]
+        );
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) {
+        console.error('[api/checkin-complete POST] Error:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
     return;
   }
 

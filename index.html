@@ -175,6 +175,8 @@
     }
   }
 
+  let teamDoneState = {}; // teamId -> boolean, now persisted server-side via /api/checkin-complete
+
   async function loadCheckinState() {
     const res = await fetch('/api/checkins/' + encodeURIComponent(gameId));
     const data = await res.json();
@@ -182,6 +184,8 @@
     (data.checkins || []).forEach(c => {
       checkinState[c.team_id + ':' + c.profile_id] = { jerseyNumber: c.jersey_number, personType: c.person_type, name: c.name };
     });
+    teamDoneState = {};
+    (data.completedTeamIds || []).forEach(teamId => { teamDoneState[teamId] = true; });
   }
 
   function updateMatchReportGate() {
@@ -198,7 +202,6 @@
     renderTeamSelector();
   }
 
-  let teamDoneState = {}; // teamId -> boolean, purely a UI signal - check-in data itself stays editable regardless
   let activeCheckinTeamId = null; // which team's roster is currently visible - only ever one at a time
 
   // The tiles ARE the switcher — clicking one shows that team's roster now,
@@ -253,14 +256,45 @@
     renderRosterList(team.id, team.name, 'players-' + team.id, team.players || [], 'player', isDone);
   }
 
-  function markTeamDone(teamId) {
-    teamDoneState[teamId] = true;
+  async function markTeamDone(teamId) {
+    const team = gameData.teams.find(t => t.id === teamId);
+    teamDoneState[teamId] = true; // optimistic - update UI immediately
     renderActiveRoster();
+    const ok = await setTeamCompletion(teamId, team.name, true);
+    if (!ok) {
+      teamDoneState[teamId] = false; // roll back on failure
+      renderActiveRoster();
+    }
   }
 
-  function editTeamCheckin(teamId) {
+  async function editTeamCheckin(teamId) {
+    const team = gameData.teams.find(t => t.id === teamId);
     teamDoneState[teamId] = false;
     renderActiveRoster();
+    const ok = await setTeamCompletion(teamId, team.name, false);
+    if (!ok) {
+      teamDoneState[teamId] = true; // roll back on failure
+      renderActiveRoster();
+    }
+  }
+
+  async function setTeamCompletion(teamId, teamName, completed) {
+    try {
+      const res = await fetch('/api/checkin-complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId, teamId, teamName, completed }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        alert(json.error || 'Failed to save check-in status.');
+        return false;
+      }
+      return true;
+    } catch (e) {
+      alert('Network error: ' + e.message);
+      return false;
+    }
   }
 
   function countCheckedIn(teamId, personType) {
