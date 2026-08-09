@@ -30,15 +30,16 @@
     .team-col h3 { margin: 0 0 4px; color: var(--navy); }
     .cap-counter { font-size: 12.5px; color: var(--gray); margin-bottom: 10px; }
     .cap-counter.at-cap { color: var(--danger); font-weight: 600; }
-    .done-banner { background: #E9F6EE; border: 1px solid var(--success); border-radius: 8px; padding: 16px; text-align: center; }
-
-    .team-select-tile { flex: 1; border: 2px solid var(--border); border-radius: 10px; padding: 18px 16px; text-align: center; cursor: pointer; user-select: none; min-height: 46px; display: flex; align-items: center; justify-content: center; }
-    .team-select-tile.selected { border-color: var(--navy); background: #F4F9FD; }
-    .team-select-tile .tname { font-weight: 700; color: var(--navy); font-size: 15px; }
     .roster-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); min-height: 44px; }
+    .roster-row.readonly { opacity: .5; }
+    .roster-row.readonly .rname { color: var(--gray); }
     .roster-row input[type="checkbox"] { width: 24px; height: 24px; flex-shrink: 0; }
     .roster-row .rname { flex: 1; font-size: 14.5px; }
     .roster-row input[type="text"] { width: 52px; padding: 10px 4px; border: 1px solid var(--border); border-radius: 6px; text-align: center; font-size: 16px; min-height: 40px; }
+    .roster-row input:disabled { background: var(--bg); cursor: not-allowed; }
+    .team-select-tile { flex: 1; border: 2px solid var(--border); border-radius: 10px; padding: 18px 16px; text-align: center; cursor: pointer; user-select: none; min-height: 46px; display: flex; align-items: center; justify-content: center; }
+    .team-select-tile.selected { border-color: var(--navy); background: #F4F9FD; }
+    .team-select-tile .tname { font-weight: 700; color: var(--navy); font-size: 15px; }
     .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--gray); margin: 14px 0 4px; }
     .back-link { display: inline-block; margin-bottom: 14px; color: var(--navy); text-decoration: none; font-size: 13px; padding: 6px 0; }
     .back-link:hover { text-decoration: underline; }
@@ -230,31 +231,26 @@
     const team = gameData.teams.find(t => t.id === activeCheckinTeamId);
     const playerCount = countCheckedIn(team.id, 'player');
     const staffCount = countCheckedIn(team.id, 'staff');
-
-    if (teamDoneState[team.id]) {
-      container.innerHTML = `
-        <div class="done-banner">
-          <div style="font-size:15px; font-weight:700; color:var(--success);">✓ Check-In Complete — ${escapeHtml(team.name)}</div>
-          <div class="muted" style="margin:4px 0 10px;">${playerCount} players, ${staffCount} staff checked in.</div>
-          <button class="secondary" onclick="editTeamCheckin('${escapeJs(team.id)}')">Edit</button>
-        </div>
-      `;
-      return;
-    }
+    const isDone = !!teamDoneState[team.id];
 
     container.innerHTML = `
-      <p class="muted" style="margin-top:0;">Enter a player's jersey number to check them in. Clear the number to remove them.</p>
+      ${isDone ? `
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+          <div style="font-size:14px; font-weight:700; color:var(--success);">✓ Check-In Complete — ${escapeHtml(team.name)}</div>
+          <button class="secondary" onclick="editTeamCheckin('${escapeJs(team.id)}')">Edit</button>
+        </div>
+      ` : `<p class="muted" style="margin-top:0;">Enter a player's jersey number to check them in. Clear the number to remove them.</p>`}
       <div class="section-label">Staff</div>
       <div class="cap-counter" id="staffCap-${team.id}">${staffCount} of ${config.maxStaff} checked in</div>
       <div id="staff-${team.id}"></div>
       <div class="section-label">Players</div>
       <div class="cap-counter" id="playerCap-${team.id}">${playerCount} of ${config.maxPlayers} checked in</div>
       <div id="players-${team.id}"></div>
-      <button style="width:100%; margin-top:14px;" onclick="markTeamDone('${escapeJs(team.id)}')">Done — ${escapeHtml(team.name)} Check-In Complete</button>
+      ${!isDone ? `<button style="width:100%; margin-top:14px;" onclick="markTeamDone('${escapeJs(team.id)}')">Done — ${escapeHtml(team.name)} Check-In Complete</button>` : ''}
     `;
 
-    renderRosterList(team.id, team.name, 'staff-' + team.id, team.staff || [], 'staff');
-    renderRosterList(team.id, team.name, 'players-' + team.id, team.players || [], 'player');
+    renderRosterList(team.id, team.name, 'staff-' + team.id, team.staff || [], 'staff', isDone);
+    renderRosterList(team.id, team.name, 'players-' + team.id, team.players || [], 'player', isDone);
   }
 
   function markTeamDone(teamId) {
@@ -273,7 +269,7 @@
     ).length;
   }
 
-  function renderRosterList(teamId, teamName, containerId, people, personType) {
+  function renderRosterList(teamId, teamName, containerId, people, personType, readOnly) {
     const container = document.getElementById(containerId);
     container.innerHTML = people.map(p => {
       const profileId = p.profileId;
@@ -281,17 +277,18 @@
       const key = teamId + ':' + profileId;
       const isChecked = !!checkinState[key];
       const currentJersey = isChecked ? (checkinState[key].jerseyNumber || '') : '';
+      const disabledAttr = readOnly ? 'disabled' : '';
 
       const control = personType === 'player'
         ? `<input type="text" inputmode="numeric" maxlength="2" placeholder="#" value="${escapeHtml(currentJersey)}"
-             id="jersey-${key}"
+             id="jersey-${key}" ${disabledAttr}
              onchange="onPlayerJerseyInput('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${escapeJs(profileId)}', '${escapeJs(name)}')" />`
-        : `<input type="checkbox" id="chk-${key}" ${isChecked ? 'checked' : ''}
+        : `<input type="checkbox" id="chk-${key}" ${isChecked ? 'checked' : ''} ${disabledAttr}
              onchange="onStaffCheckToggle('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${escapeJs(profileId)}', '${escapeJs(name)}', this.checked)" />`;
 
       return `
         <div>
-          <div class="roster-row">
+          <div class="roster-row ${readOnly ? 'readonly' : ''}">
             ${control}
             <span class="rname">${escapeHtml(name)}</span>
           </div>
