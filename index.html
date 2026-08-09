@@ -26,6 +26,7 @@
     .team-col h3 { margin: 0 0 4px; color: var(--navy); }
     .cap-counter { font-size: 12.5px; color: var(--gray); margin-bottom: 10px; }
     .cap-counter.at-cap { color: var(--danger); font-weight: 600; }
+    .done-banner { background: #E9F6EE; border: 1px solid var(--success); border-radius: 8px; padding: 16px; text-align: center; }
     .roster-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
     .roster-row input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; }
     .roster-row .rname { flex: 1; font-size: 14px; }
@@ -33,6 +34,22 @@
     .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--gray); margin: 14px 0 4px; }
     .back-link { display: inline-block; margin-bottom: 14px; color: var(--navy); text-decoration: none; font-size: 13px; }
     .back-link:hover { text-decoration: underline; }
+
+    .modal-overlay { position: fixed; inset: 0; background: rgba(17,33,63,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+    .modal-box { background: #fff; border-radius: 10px; padding: 20px; width: 90%; max-width: 420px; max-height: 80vh; overflow-y: auto; }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .modal-header h3 { margin: 0; color: var(--navy); font-size: 16px; }
+    .option { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; cursor: pointer; }
+    .option:hover { border-color: var(--blue); background: #F4F9FD; }
+
+    .score-input-row { display: flex; align-items: center; gap: 10px; }
+    .score-input-row input { width: 70px; padding: 10px; font-size: 20px; text-align: center; border: 1px solid var(--border); border-radius: 8px; }
+
+    .report-section { margin-top: 12px; }
+    .report-section h4 { margin: 0 0 6px; font-size: 13px; color: var(--gray); text-transform: uppercase; letter-spacing: .03em; }
+    .report-entry { display: flex; align-items: center; justify-content: space-between; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; font-size: 13.5px; }
+    .report-entry button { padding: 1px 7px; font-size: 12px; background: transparent; color: var(--danger); border: none; }
+    .add-event-btn { width: 100%; margin-top: 4px; }
   </style>
 </head>
 <body>
@@ -54,7 +71,7 @@
     <p class="muted" id="gameSubtitle"></p>
     <div class="landing-buttons">
       <button onclick="showCheckIn()">Check In</button>
-      <button id="matchReportBtn" class="secondary" disabled onclick="alert('Match Report — coming in Stage 3')">Submit Match Report</button>
+      <button id="matchReportBtn" class="secondary" disabled onclick="showMatchReport()">Submit Match Report</button>
     </div>
     <p class="muted" style="margin-top:10px;" id="matchReportGateNote">Complete Check-In for at least one player before Match Report unlocks.</p>
   </div>
@@ -64,6 +81,29 @@
     <a href="#" class="back-link" onclick="showLanding(); return false;">← Back</a>
     <h2 style="margin-top:0; color:var(--navy);">Check In</h2>
     <div class="team-columns" id="teamColumns"></div>
+  </div>
+
+  <!-- MATCH REPORT VIEW -->
+  <div id="matchReportView" class="card" style="display:none;">
+    <a href="#" class="back-link" onclick="showLanding(); return false;">← Back</a>
+    <h2 style="margin-top:0; color:var(--navy);">Match Report</h2>
+
+    <div class="team-columns" id="scoreColumns" style="margin-bottom:20px;"></div>
+    <div class="team-columns" id="reportColumns"></div>
+
+    <button id="submitReportBtn" style="width:100%; margin-top:18px; padding:14px; font-size:15px;" onclick="submitMatchReport()">Submit Match Report</button>
+    <div id="reportSubmitResult" style="margin-top:10px;"></div>
+  </div>
+
+  <!-- MATCH REPORT PLAYER PICKER MODAL -->
+  <div id="reportPickerOverlay" class="modal-overlay" style="display:none;" onclick="if(event.target===this) closeReportPicker()">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="reportPickerTitle">Select</h3>
+        <button class="secondary" onclick="closeReportPicker()">✕</button>
+      </div>
+      <div id="reportPickerList" style="max-height:340px; overflow-y:auto;"></div>
+    </div>
   </div>
 </main>
 
@@ -104,6 +144,7 @@
       gameData = gameRes;
 
       await loadCheckinState();
+      await loadMatchReportState();
 
       document.getElementById('loadingState').style.display = 'none';
       document.getElementById('landingView').style.display = 'block';
@@ -125,7 +166,7 @@
     const data = await res.json();
     checkinState = {};
     (data.checkins || []).forEach(c => {
-      checkinState[c.team_id + ':' + c.profile_id] = { jerseyNumber: c.jersey_number, personType: c.person_type };
+      checkinState[c.team_id + ':' + c.profile_id] = { jerseyNumber: c.jersey_number, personType: c.person_type, name: c.name };
     });
   }
 
@@ -140,6 +181,8 @@
     document.getElementById('checkInView').style.display = 'block';
   }
 
+  let teamDoneState = {}; // teamId -> boolean, purely a UI signal - check-in data itself stays editable regardless
+
   function renderCheckInTeams() {
     const container = document.getElementById('teamColumns');
     container.innerHTML = '';
@@ -147,24 +190,52 @@
     gameData.teams.forEach(team => {
       const col = document.createElement('div');
       col.className = 'team-col';
+      col.id = 'teamCol-' + team.id;
+      container.appendChild(col);
+      renderTeamColumn(team);
+    });
+  }
 
-      const playerCount = countCheckedIn(team.id, 'player');
-      const staffCount = countCheckedIn(team.id, 'staff');
+  function renderTeamColumn(team) {
+    const col = document.getElementById('teamCol-' + team.id);
+    const playerCount = countCheckedIn(team.id, 'player');
+    const staffCount = countCheckedIn(team.id, 'staff');
 
+    if (teamDoneState[team.id]) {
       col.innerHTML = `
         <h3>${escapeHtml(team.name)}</h3>
-        <div class="section-label">Players</div>
-        <div class="cap-counter" id="playerCap-${team.id}">${playerCount} of ${config.maxPlayers} checked in</div>
-        <div id="players-${team.id}"></div>
-        <div class="section-label">Staff</div>
-        <div class="cap-counter" id="staffCap-${team.id}">${staffCount} of ${config.maxStaff} checked in</div>
-        <div id="staff-${team.id}"></div>
+        <div class="done-banner">
+          <div style="font-size:15px; font-weight:700; color:var(--success);">✓ Check-In Complete</div>
+          <div class="muted" style="margin:4px 0 10px;">${playerCount} players, ${staffCount} staff checked in.</div>
+          <button class="secondary" onclick="editTeamCheckin('${escapeJs(team.id)}')">Edit</button>
+        </div>
       `;
-      container.appendChild(col);
+      return;
+    }
 
-      renderRosterList(team.id, team.name, 'players-' + team.id, team.players || [], 'player');
-      renderRosterList(team.id, team.name, 'staff-' + team.id, team.staff || [], 'staff');
-    });
+    col.innerHTML = `
+      <h3>${escapeHtml(team.name)}</h3>
+      <div class="section-label">Players</div>
+      <div class="cap-counter" id="playerCap-${team.id}">${playerCount} of ${config.maxPlayers} checked in</div>
+      <div id="players-${team.id}"></div>
+      <div class="section-label">Staff</div>
+      <div class="cap-counter" id="staffCap-${team.id}">${staffCount} of ${config.maxStaff} checked in</div>
+      <div id="staff-${team.id}"></div>
+      <button style="width:100%; margin-top:14px;" onclick="markTeamDone('${escapeJs(team.id)}')">Done — ${escapeHtml(team.name)} Check-In Complete</button>
+    `;
+
+    renderRosterList(team.id, team.name, 'players-' + team.id, team.players || [], 'player');
+    renderRosterList(team.id, team.name, 'staff-' + team.id, team.staff || [], 'staff');
+  }
+
+  function markTeamDone(teamId) {
+    teamDoneState[teamId] = true;
+    renderTeamColumn(gameData.teams.find(t => t.id === teamId));
+  }
+
+  function editTeamCheckin(teamId) {
+    teamDoneState[teamId] = false;
+    renderTeamColumn(gameData.teams.find(t => t.id === teamId));
   }
 
   function countCheckedIn(teamId, personType) {
@@ -183,34 +254,46 @@
       const currentJersey = isChecked ? (checkinState[key].jerseyNumber || '') : '';
 
       return `
-        <div class="roster-row">
-          <input type="checkbox" id="chk-${key}" ${isChecked ? 'checked' : ''}
-            onchange="onCheckToggle('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${personType}', '${escapeJs(profileId)}', '${escapeJs(name)}', this.checked)" />
-          <span class="rname">${escapeHtml(name)}</span>
-          ${personType === 'player' ? `<input type="text" maxlength="2" placeholder="#" value="${escapeHtml(currentJersey)}"
-            id="jersey-${key}" ${isChecked ? '' : 'disabled'}
-            onchange="onJerseyChange('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${profileId}', '${escapeJs(name)}')" />` : ''}
+        <div>
+          <div class="roster-row">
+            <input type="checkbox" id="chk-${key}" ${isChecked ? 'checked' : ''}
+              onchange="onCheckToggle('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${personType}', '${escapeJs(profileId)}', '${escapeJs(name)}', this.checked)" />
+            <span class="rname">${escapeHtml(name)}</span>
+            ${personType === 'player' ? `<input type="text" maxlength="2" placeholder="#" value="${escapeHtml(currentJersey)}"
+              id="jersey-${key}"
+              onchange="onJerseyChange('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${escapeJs(profileId)}', '${escapeJs(name)}')" />` : ''}
+          </div>
+          <div class="row-error" id="err-${key}" style="display:none; color:var(--danger); font-size:11.5px; margin:-4px 0 4px;"></div>
         </div>`;
     }).join('') || '<p class="muted">No roster listed.</p>';
   }
 
   async function onCheckToggle(teamId, teamName, personType, profileId, name, isChecked) {
-    const checkboxEl = document.getElementById('chk-' + teamId + ':' + profileId);
-    const jerseyEl = document.getElementById('jersey-' + teamId + ':' + profileId);
+    const key = teamId + ':' + profileId;
+    const checkboxEl = document.getElementById('chk-' + key);
+    const jerseyEl = document.getElementById('jersey-' + key);
+    const errEl = document.getElementById('err-' + key);
+    if (errEl) errEl.style.display = 'none';
 
     if (isChecked) {
       const jerseyNumber = jerseyEl ? jerseyEl.value.trim() : null;
+
+      if (personType === 'player' && !jerseyNumber) {
+        checkboxEl.checked = false; // revert - can't check in a player without a jersey number
+        if (errEl) { errEl.textContent = 'Enter a jersey number before checking in.'; errEl.style.display = 'block'; }
+        if (jerseyEl) jerseyEl.focus();
+        return;
+      }
+
       const ok = await submitCheckin(teamId, teamName, personType, profileId, name, jerseyNumber, 'add');
       if (!ok) {
         checkboxEl.checked = false; // revert on failure (e.g. cap reached)
         return;
       }
-      if (jerseyEl) jerseyEl.disabled = false;
-      checkinState[teamId + ':' + profileId] = { jerseyNumber, personType };
+      checkinState[key] = { jerseyNumber, personType, name };
     } else {
       await submitCheckin(teamId, teamName, personType, profileId, name, null, 'remove');
-      if (jerseyEl) { jerseyEl.disabled = true; jerseyEl.value = ''; }
-      delete checkinState[teamId + ':' + profileId];
+      delete checkinState[key];
     }
 
     refreshCounters(teamId);
@@ -222,6 +305,20 @@
     if (!checkinState[key]) return; // not checked in, nothing to update
     const jerseyEl = document.getElementById('jersey-' + key);
     const jerseyNumber = jerseyEl.value.trim();
+    const errEl = document.getElementById('err-' + key);
+
+    if (!jerseyNumber) {
+      // Clearing the jersey number un-checks them — a checked-in player must
+      // always have one.
+      await submitCheckin(teamId, teamName, 'player', profileId, name, null, 'remove');
+      delete checkinState[key];
+      document.getElementById('chk-' + key).checked = false;
+      if (errEl) { errEl.textContent = 'Jersey number cleared — player un-checked. Re-check with a number to check them back in.'; errEl.style.display = 'block'; }
+      refreshCounters(teamId);
+      updateMatchReportGate();
+      return;
+    }
+
     await submitCheckin(teamId, teamName, 'player', profileId, name, jerseyNumber, 'add'); // 'add' also handles updates via upsert
     checkinState[key].jerseyNumber = jerseyNumber;
   }
@@ -270,6 +367,196 @@
   }
   function escapeJs(str) {
     return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  }
+
+  // ---------- Match Report ----------
+
+  let reportScores = {}; // teamId -> score
+  let reportEntries = []; // {teamId, teamName, personType, profileId, name, eventType, minute}
+  let activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null };
+
+  async function loadMatchReportState() {
+    const res = await fetch('/api/match-report/' + encodeURIComponent(gameId));
+    const data = await res.json();
+    reportScores = {};
+    if (data.scores) {
+      reportScores[data.scores.team1_id] = data.scores.team1_score;
+      reportScores[data.scores.team2_id] = data.scores.team2_score;
+    }
+    reportEntries = (data.entries || []).map(e => ({
+      teamId: e.team_id, teamName: e.team_name, personType: e.person_type,
+      profileId: e.profile_id, name: e.name, eventType: e.event_type, minute: e.minute,
+    }));
+  }
+
+  function showMatchReport() {
+    document.getElementById('landingView').style.display = 'none';
+    document.getElementById('matchReportView').style.display = 'block';
+    renderScoreInputs();
+    renderReportColumns();
+  }
+
+  function renderScoreInputs() {
+    const container = document.getElementById('scoreColumns');
+    container.innerHTML = gameData.teams.map(team => `
+      <div>
+        <h3 style="color:var(--navy); margin-bottom:6px;">${escapeHtml(team.name)}</h3>
+        <div class="score-input-row">
+          <span class="muted">Score:</span>
+          <input type="number" min="0" id="score-${team.id}" value="${reportScores[team.id] != null ? reportScores[team.id] : ''}" />
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function renderReportColumns() {
+    const container = document.getElementById('reportColumns');
+    container.innerHTML = '';
+    gameData.teams.forEach(team => {
+      const col = document.createElement('div');
+      const eventTypes = ['Goal', 'Yellow Card', 'Red Card'];
+      col.innerHTML = eventTypes.map(type => `
+        <div class="report-section">
+          <h4>${type}s</h4>
+          <div id="report-${type}-${team.id}"></div>
+          <button class="secondary add-event-btn" onclick="openReportPicker('${escapeJs(team.id)}', '${escapeJs(team.name)}', '${type}')">+ Add ${type}</button>
+        </div>
+      `).join('');
+      container.appendChild(col);
+    });
+    gameData.teams.forEach(team => {
+      ['Goal', 'Yellow Card', 'Red Card'].forEach(type => renderReportList(team.id, type));
+    });
+  }
+
+  function renderReportList(teamId, eventType) {
+    const el = document.getElementById('report-' + eventType + '-' + teamId);
+    if (!el) return;
+    const items = reportEntries.filter(e => e.teamId === teamId && e.eventType === eventType);
+    el.innerHTML = items.length
+      ? items.map(e => {
+          const idx = reportEntries.indexOf(e);
+          return `<div class="report-entry"><span>${escapeHtml(e.name)}${e.minute != null ? ' — min ' + e.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
+        }).join('')
+      : '<div class="muted" style="font-size:12px;">None added yet.</div>';
+  }
+
+  function removeReportEntry(idx) {
+    const entry = reportEntries[idx];
+    reportEntries.splice(idx, 1);
+    renderReportList(entry.teamId, entry.eventType);
+  }
+
+  function openReportPicker(teamId, teamName, eventType) {
+    activeReportPicker = { teamId, teamName, eventType, pendingPerson: null };
+    document.getElementById('reportPickerTitle').textContent = teamName + ' — ' + eventType;
+    renderReportPickerPersonList();
+    document.getElementById('reportPickerOverlay').style.display = 'flex';
+  }
+
+  function closeReportPicker() {
+    document.getElementById('reportPickerOverlay').style.display = 'none';
+    activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null };
+  }
+
+  // Only people actually checked in for this team appear here — pulled from
+  // checkinState, not the full SportsEngine roster.
+  function renderReportPickerPersonList() {
+    const { teamId } = activeReportPicker;
+    const listEl = document.getElementById('reportPickerList');
+    const people = Object.entries(checkinState)
+      .filter(([key]) => key.startsWith(teamId + ':'))
+      .map(([key, val]) => ({ profileId: key.split(':')[1], ...val }));
+
+    if (!people.length) {
+      listEl.innerHTML = '<p class="muted">No one checked in for this team yet — go to Check In first.</p>';
+      return;
+    }
+
+    listEl.innerHTML = people.map(p => `
+      <div class="option" onclick="pickReportPerson('${escapeJs(p.profileId)}')">
+        <div style="font-weight:600;">${escapeHtml(p.name)}${p.personType === 'staff' ? ' <span class="pill" style="background:#F1EAD9; color:#7A5B12; padding:2px 8px; border-radius:10px; font-size:10.5px; font-weight:700;">STAFF</span>' : ''}</div>
+        ${p.jerseyNumber ? `<div class="muted" style="font-size:12px;">#${escapeHtml(p.jerseyNumber)}</div>` : ''}
+      </div>
+    `).join('');
+  }
+
+  function pickReportPerson(profileId) {
+    const key = activeReportPicker.teamId + ':' + profileId;
+    const person = checkinState[key];
+    if (!person) return;
+    activeReportPicker.pendingPerson = { profileId, name: person.name, personType: person.personType };
+    renderMinutePicker();
+  }
+
+  function renderMinutePicker() {
+    const listEl = document.getElementById('reportPickerList');
+    listEl.innerHTML = `
+      <a href="#" onclick="renderReportPickerPersonList(); return false;" class="back-link">← Back to list</a>
+      <p class="muted" style="margin-bottom:10px;"><strong>${escapeHtml(activeReportPicker.pendingPerson.name)}</strong> — enter minute (optional)</p>
+      <input type="number" min="0" id="minuteInput" placeholder="Minute" style="width:100%; padding:10px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px;" />
+      <button style="width:100%;" onclick="confirmReportEntry()">Add</button>
+    `;
+  }
+
+  function confirmReportEntry() {
+    const minuteVal = document.getElementById('minuteInput').value.trim();
+    const minute = minuteVal === '' ? null : parseInt(minuteVal, 10);
+    const { teamId, teamName, eventType, pendingPerson } = activeReportPicker;
+    reportEntries.push({
+      teamId, teamName, personType: pendingPerson.personType, profileId: pendingPerson.profileId,
+      name: pendingPerson.name, eventType, minute,
+    });
+    renderReportList(teamId, eventType);
+    closeReportPicker();
+  }
+
+  async function submitMatchReport() {
+    const resultEl = document.getElementById('reportSubmitResult');
+    resultEl.innerHTML = '';
+    const btn = document.getElementById('submitReportBtn');
+
+    const scores = {};
+    for (const team of gameData.teams) {
+      const val = document.getElementById('score-' + team.id).value.trim();
+      if (val === '') {
+        resultEl.innerHTML = '<div class="err">Enter a score for both teams.</div>';
+        return;
+      }
+      scores[team.id] = parseInt(val, 10);
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Submitting...';
+
+    const payload = {
+      gameId,
+      team1: { id: gameData.teams[0].id, name: gameData.teams[0].name, score: scores[gameData.teams[0].id] },
+      team2: { id: gameData.teams[1].id, name: gameData.teams[1].name, score: scores[gameData.teams[1].id] },
+      entries: reportEntries,
+    };
+
+    try {
+      const res = await fetch('/api/match-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Unknown error');
+
+      if (json.scoreUpdated) {
+        resultEl.innerHTML = '<div style="color:var(--success); font-size:13px;">Match report saved, and the score was pushed to SportsEngine successfully.</div>';
+      } else {
+        resultEl.innerHTML = '<div class="err">Report saved, but pushing the score to SportsEngine failed: ' +
+          escapeHtml(json.scoreError || 'unknown error') + '. Your entries are safe — you can resubmit to retry the score push.</div>';
+      }
+    } catch (e) {
+      resultEl.innerHTML = '<div class="err">Submit failed: ' + escapeHtml(e.message) + '</div>';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Submit Match Report';
+    }
   }
 
   init();
