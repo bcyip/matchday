@@ -309,9 +309,21 @@
     const wasCheckedIn = !!checkinState[key];
 
     if (jerseyNumber) {
+      // Quick client-side check for an immediate response - the server
+      // still enforces this too (source of truth, and safe under
+      // simultaneous requests from two different people).
+      const duplicate = Object.entries(checkinState).find(([otherKey, val]) =>
+        otherKey !== key && otherKey.startsWith(teamId + ':') && val.personType === 'player' && val.jerseyNumber === jerseyNumber
+      );
+      if (duplicate) {
+        jerseyEl.value = wasCheckedIn ? checkinState[key].jerseyNumber : '';
+        if (errEl) { errEl.textContent = `Jersey number ${jerseyNumber} is already assigned to ${duplicate[1].name}.`; errEl.style.display = 'block'; }
+        return;
+      }
+
       const ok = await submitCheckin(teamId, teamName, 'player', profileId, name, jerseyNumber, 'add');
       if (!ok) {
-        jerseyEl.value = wasCheckedIn ? checkinState[key].jerseyNumber : ''; // revert on failure (e.g. cap reached)
+        jerseyEl.value = wasCheckedIn ? checkinState[key].jerseyNumber : ''; // revert on failure (e.g. cap reached or server-side duplicate catch)
         return;
       }
       checkinState[key] = { jerseyNumber, personType: 'player', name };

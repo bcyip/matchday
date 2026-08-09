@@ -272,17 +272,34 @@ const server = http.createServer(async (req, res) => {
           'SELECT 1 FROM checkins WHERE game_id = $1 AND team_id = $2 AND profile_id = $3',
           [gameId, teamId, profileId]
         );
+        const isNewCheckin = existing.rowCount === 0;
 
-        if (existing.rowCount === 0) {
-          // New check-in — serialize concurrent attempts for this exact
-          // game+team+personType group using an advisory lock, so two
-          // simultaneous requests can't both slip past the cap check at
-          // once. (FOR UPDATE can't be combined with COUNT(*) - it's an
-          // aggregate, not real rows to lock - so an advisory lock is the
-          // correct tool here, not a row lock.) Auto-released at COMMIT/
-          // ROLLBACK, no separate unlock call needed.
-          await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [gameId + ':' + teamId + ':' + personType]);
+        // Serialize concurrent attempts for this exact game+team+personType
+        // group using an advisory lock - covers both the jersey-duplicate
+        // check and the cap check below, so two simultaneous requests can't
+        // both slip past either one at once. (FOR UPDATE can't be combined
+        // with COUNT(*) - it's an aggregate, not real rows to lock - so an
+        // advisory lock is the correct tool here.) Auto-released at COMMIT/
+        // ROLLBACK, no separate unlock call needed.
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [gameId + ':' + teamId + ':' + personType]);
 
+        // Players can't share a jersey number with another checked-in
+        // player on the same team. Checked on every add - both a brand new
+        // check-in AND a jersey-number change for someone already checked
+        // in - since either could introduce a collision.
+        if (personType === 'player' && jerseyNumber) {
+          const dupCheck = await client.query(
+            'SELECT name FROM checkins WHERE game_id = $1 AND team_id = $2 AND person_type = $3 AND jersey_number = $4 AND profile_id != $5',
+            [gameId, teamId, personType, jerseyNumber, profileId]
+          );
+          if (dupCheck.rowCount > 0) {
+            await client.query('ROLLBACK');
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ error: `Jersey number ${jerseyNumber} is already assigned to ${dupCheck.rows[0].name} on this team.` }));
+          }
+        }
+
+        if (isNewCheckin) {
           const cap = personType === 'player' ? MAX_PLAYERS_CHECKIN : MAX_STAFF_CHECKIN;
           const countResult = await client.query(
             'SELECT COUNT(*) FROM checkins WHERE game_id = $1 AND team_id = $2 AND person_type = $3',
