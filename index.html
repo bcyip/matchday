@@ -101,8 +101,11 @@
     <a href="#" class="back-link" onclick="showLanding(); return false;">← Back</a>
     <h2 style="margin-top:0; color:var(--navy);">Match Report</h2>
 
-    <div class="team-columns" id="scoreColumns" style="margin-bottom:20px;"></div>
-    <div class="team-columns" id="reportColumns"></div>
+    <div class="team-columns" id="scoreGoalColumns" style="margin-bottom:20px;"></div>
+
+    <div class="section-label">Select a team to add misconduct</div>
+    <div id="reportTeamSelector" style="display:flex; gap:10px; margin-bottom:16px;"></div>
+    <div id="activeReportMisconduct"></div>
 
     <button id="submitReportBtn" style="width:100%; margin-top:18px; padding:14px; font-size:15px;" onclick="submitMatchReport()">Submit Match Report</button>
     <div id="reportSubmitResult" style="margin-top:10px;"></div>
@@ -460,16 +463,21 @@
     }));
   }
 
+  let activeReportTeamId = null; // which team's misconduct section is currently visible - only ever one at a time
+
   function showMatchReport() {
     document.getElementById('landingView').style.display = 'none';
     document.getElementById('checkInView').style.display = 'none';
     document.getElementById('matchReportView').style.display = 'block';
-    renderScoreInputs();
-    renderReportColumns();
+    activeReportTeamId = null;
+    renderScoreAndGoals();
+    renderReportTeamSelector();
   }
 
-  function renderScoreInputs() {
-    const container = document.getElementById('scoreColumns');
+  // Top section: score input + goal slots together, for BOTH teams at once
+  // (side-by-side on desktop, stacked on mobile via .team-columns).
+  function renderScoreAndGoals() {
+    const container = document.getElementById('scoreGoalColumns');
     container.innerHTML = gameData.teams.map(team => `
       <div>
         <h3 style="color:var(--navy); margin-bottom:6px;">${escapeHtml(team.name)}</h3>
@@ -478,8 +486,11 @@
           <input type="number" inputmode="numeric" min="0" id="score-${team.id}" value="${reportScores[team.id] != null ? reportScores[team.id] : ''}"
             onchange="onScoreChange('${escapeJs(team.id)}')" />
         </div>
+        <div class="section-label">Goals</div>
+        <div id="report-Goal-${team.id}"></div>
       </div>
     `).join('');
+    gameData.teams.forEach(team => renderGoalSlots(team.id, team.name));
   }
 
   function onScoreChange(teamId) {
@@ -495,36 +506,6 @@
 
   function goalCountForTeam(teamId) {
     return reportEntries.filter(e => e.teamId === teamId && e.eventType === 'Goal').length;
-  }
-
-  function renderReportColumns() {
-    const container = document.getElementById('reportColumns');
-    container.innerHTML = '';
-    gameData.teams.forEach(team => {
-      const col = document.createElement('div');
-      col.innerHTML = `
-        <div class="report-section">
-          <h4>Goals</h4>
-          <div id="report-Goal-${team.id}"></div>
-        </div>
-        <div class="report-section">
-          <h4>Yellow Cards</h4>
-          <div id="report-Yellow Card-${team.id}"></div>
-          <button class="secondary add-event-btn" onclick="openReportPicker('${escapeJs(team.id)}', '${escapeJs(team.name)}', 'Yellow Card')">+ Add Yellow Card</button>
-        </div>
-        <div class="report-section">
-          <h4>Red Cards</h4>
-          <div id="report-Red Card-${team.id}"></div>
-          <button class="secondary add-event-btn" onclick="openReportPicker('${escapeJs(team.id)}', '${escapeJs(team.name)}', 'Red Card')">+ Add Red Card</button>
-        </div>
-      `;
-      container.appendChild(col);
-    });
-    gameData.teams.forEach(team => {
-      renderGoalSlots(team.id, team.name);
-      renderReportList(team.id, 'Yellow Card');
-      renderReportList(team.id, 'Red Card');
-    });
   }
 
   function goalEntriesForTeam(teamId) {
@@ -561,6 +542,48 @@
       }
     }
     el.innerHTML = html;
+  }
+
+  // Bottom section: pick one team at a time (same tile-switcher pattern as
+  // Check-In) to add Yellow/Red Card misconduct - never both teams' details
+  // shown simultaneously.
+  function renderReportTeamSelector() {
+    const container = document.getElementById('reportTeamSelector');
+    container.innerHTML = gameData.teams.map(team => `
+      <div class="team-select-tile ${activeReportTeamId === team.id ? 'selected' : ''}"
+        onclick="selectActiveReportTeam('${escapeJs(team.id)}')">
+        <div class="tname">${escapeHtml(team.name)}</div>
+      </div>
+    `).join('');
+    renderActiveReportMisconduct();
+  }
+
+  function selectActiveReportTeam(teamId) {
+    activeReportTeamId = teamId;
+    renderReportTeamSelector();
+  }
+
+  function renderActiveReportMisconduct() {
+    const container = document.getElementById('activeReportMisconduct');
+    if (!activeReportTeamId) {
+      container.innerHTML = '<p class="muted">Select a team above to add Yellow/Red Card misconduct.</p>';
+      return;
+    }
+    const team = gameData.teams.find(t => t.id === activeReportTeamId);
+    container.innerHTML = `
+      <div class="report-section">
+        <h4>Yellow Cards</h4>
+        <div id="report-Yellow Card-${team.id}"></div>
+        <button class="secondary add-event-btn" onclick="openReportPicker('${escapeJs(team.id)}', '${escapeJs(team.name)}', 'Yellow Card')">+ Add Yellow Card</button>
+      </div>
+      <div class="report-section">
+        <h4>Red Cards</h4>
+        <div id="report-Red Card-${team.id}"></div>
+        <button class="secondary add-event-btn" onclick="openReportPicker('${escapeJs(team.id)}', '${escapeJs(team.name)}', 'Red Card')">+ Add Red Card</button>
+      </div>
+    `;
+    renderReportList(team.id, 'Yellow Card');
+    renderReportList(team.id, 'Red Card');
   }
 
   function renderReportList(teamId, eventType) {
