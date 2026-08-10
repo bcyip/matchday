@@ -475,10 +475,39 @@
         <h3 style="color:var(--navy); margin-bottom:6px;">${escapeHtml(team.name)}</h3>
         <div class="score-input-row">
           <span class="muted">Score:</span>
-          <input type="number" inputmode="numeric" min="0" id="score-${team.id}" value="${reportScores[team.id] != null ? reportScores[team.id] : ''}" />
+          <input type="number" inputmode="numeric" min="0" id="score-${team.id}" value="${reportScores[team.id] != null ? reportScores[team.id] : ''}"
+            onchange="onScoreChange('${escapeJs(team.id)}')" />
         </div>
       </div>
     `).join('');
+  }
+
+  function onScoreChange(teamId) {
+    refreshGoalCounter(teamId);
+  }
+
+  function currentScoreValue(teamId) {
+    const el = document.getElementById('score-' + teamId);
+    const val = el ? el.value.trim() : '';
+    return val === '' ? null : parseInt(val, 10);
+  }
+
+  function goalCountForTeam(teamId) {
+    return reportEntries.filter(e => e.teamId === teamId && e.eventType === 'Goal').length;
+  }
+
+  function refreshGoalCounter(teamId) {
+    const el = document.getElementById('goalCounter-' + teamId);
+    if (!el) return;
+    const score = currentScoreValue(teamId);
+    const count = goalCountForTeam(teamId);
+    if (score == null) {
+      el.textContent = 'Enter the score above first.';
+      el.classList.remove('at-cap');
+    } else {
+      el.textContent = count + ' of ' + score + ' goal(s) recorded';
+      el.classList.toggle('at-cap', count !== score);
+    }
   }
 
   function renderReportColumns() {
@@ -490,6 +519,7 @@
       col.innerHTML = eventTypes.map(type => `
         <div class="report-section">
           <h4>${type}s</h4>
+          ${type === 'Goal' ? `<div class="cap-counter" id="goalCounter-${team.id}"></div>` : ''}
           <div id="report-${type}-${team.id}"></div>
           <button class="secondary add-event-btn" onclick="openReportPicker('${escapeJs(team.id)}', '${escapeJs(team.name)}', '${type}')">+ Add ${type}</button>
         </div>
@@ -498,6 +528,7 @@
     });
     gameData.teams.forEach(team => {
       ['Goal', 'Yellow Card', 'Red Card'].forEach(type => renderReportList(team.id, type));
+      refreshGoalCounter(team.id);
     });
   }
 
@@ -511,6 +542,7 @@
           return `<div class="report-entry"><span>${escapeHtml(e.name)}${e.minute != null ? ' — min ' + e.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
         }).join('')
       : '<div class="muted" style="font-size:12px;">None added yet.</div>';
+    if (eventType === 'Goal') refreshGoalCounter(teamId);
   }
 
   function removeReportEntry(idx) {
@@ -596,6 +628,27 @@
         return;
       }
       scores[team.id] = parseInt(val, 10);
+    }
+
+    // Goal count must exactly match the entered score for each team - forces
+    // a goal-scorer + minute to be recorded for every goal in the score.
+    for (const team of gameData.teams) {
+      const goalCount = goalCountForTeam(team.id);
+      const score = scores[team.id];
+      if (goalCount !== score) {
+        resultEl.innerHTML = `<div class="err">${escapeHtml(team.name)}: ${goalCount} of ${score} goal(s) recorded. ` +
+          (goalCount < score ? 'Add the missing goal scorer(s) before submitting.' : 'Remove the extra goal entry/entries before submitting.') + '</div>';
+        return;
+      }
+    }
+
+    // If neither team has any Yellow Card or Red Card entries at all,
+    // confirm this is intentional before submitting - a safety check
+    // against forgetting to log misconduct, not a hard block.
+    const anyMisconduct = reportEntries.some(e => e.eventType === 'Yellow Card' || e.eventType === 'Red Card');
+    if (!anyMisconduct) {
+      const confirmed = confirm('No yellow or red cards have been recorded for this match. Confirm there was no misconduct?');
+      if (!confirmed) return;
     }
 
     btn.disabled = true;
