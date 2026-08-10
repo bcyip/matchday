@@ -103,9 +103,16 @@
 
     <div class="team-columns" id="scoreGoalColumns" style="margin-bottom:20px;"></div>
 
-    <div class="section-label">Select a team to add misconduct</div>
-    <div id="reportTeamSelector" style="display:flex; gap:10px; margin-bottom:16px;"></div>
-    <div id="activeReportMisconduct"></div>
+    <div class="report-section">
+      <h4>Yellow Cards</h4>
+      <div id="report-Yellow Card"></div>
+      <button class="secondary add-event-btn" onclick="openMisconductPicker('Yellow Card')">+ Add Yellow Card</button>
+    </div>
+    <div class="report-section">
+      <h4>Red Cards</h4>
+      <div id="report-Red Card"></div>
+      <button class="secondary add-event-btn" onclick="openMisconductPicker('Red Card')">+ Add Red Card</button>
+    </div>
 
     <button id="submitReportBtn" style="width:100%; margin-top:18px; padding:14px; font-size:15px;" onclick="submitMatchReport()">Submit Match Report</button>
     <div id="reportSubmitResult" style="margin-top:10px;"></div>
@@ -447,7 +454,7 @@
 
   let reportScores = {}; // teamId -> score
   let reportEntries = []; // {teamId, teamName, personType, profileId, name, eventType, minute}
-  let activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null };
+  let activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null, needsTeamChoice: false };
 
   async function loadMatchReportState() {
     const res = await fetch('/api/match-report/' + encodeURIComponent(gameId));
@@ -463,15 +470,13 @@
     }));
   }
 
-  let activeReportTeamId = null; // which team's misconduct section is currently visible - only ever one at a time
-
   function showMatchReport() {
     document.getElementById('landingView').style.display = 'none';
     document.getElementById('checkInView').style.display = 'none';
     document.getElementById('matchReportView').style.display = 'block';
-    activeReportTeamId = null;
     renderScoreAndGoals();
-    renderReportTeamSelector();
+    renderUnifiedReportList('Yellow Card');
+    renderUnifiedReportList('Red Card');
   }
 
   // Top section: score input + goal slots together, for BOTH teams at once
@@ -516,6 +521,7 @@
   // the score, pre-listed and waiting to be filled. Clicking an empty slot
   // opens the picker for that specific goal; no separate "+ Add Goal"
   // button exists since the score itself determines how many are needed.
+  // (Goal slots already know their team - no team-choice step needed here.)
   function renderGoalSlots(teamId, teamName) {
     const el = document.getElementById('report-Goal-' + teamId);
     if (!el) return;
@@ -538,62 +544,22 @@
         const idx = reportEntries.indexOf(entry);
         html += `<div class="report-entry"><span>Goal ${i + 1}: ${escapeHtml(entry.name)}${entry.minute != null ? ' — min ' + entry.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
       } else {
-        html += `<div class="option" style="margin-bottom:6px; text-align:center; color:var(--gray);" onclick="openReportPicker('${escapeJs(teamId)}', '${escapeJs(teamName)}', 'Goal')">+ Goal ${i + 1}: select player</div>`;
+        html += `<div class="option" style="margin-bottom:6px; text-align:center; color:var(--gray);" onclick="openGoalPicker('${escapeJs(teamId)}', '${escapeJs(teamName)}')">+ Goal ${i + 1}: select player</div>`;
       }
     }
     el.innerHTML = html;
   }
 
-  // Bottom section: pick one team at a time (same tile-switcher pattern as
-  // Check-In) to add Yellow/Red Card misconduct - never both teams' details
-  // shown simultaneously.
-  function renderReportTeamSelector() {
-    const container = document.getElementById('reportTeamSelector');
-    container.innerHTML = gameData.teams.map(team => `
-      <div class="team-select-tile ${activeReportTeamId === team.id ? 'selected' : ''}"
-        onclick="selectActiveReportTeam('${escapeJs(team.id)}')">
-        <div class="tname">${escapeHtml(team.name)}</div>
-      </div>
-    `).join('');
-    renderActiveReportMisconduct();
-  }
-
-  function selectActiveReportTeam(teamId) {
-    activeReportTeamId = teamId;
-    renderReportTeamSelector();
-  }
-
-  function renderActiveReportMisconduct() {
-    const container = document.getElementById('activeReportMisconduct');
-    if (!activeReportTeamId) {
-      container.innerHTML = '<p class="muted">Select a team above to add Yellow/Red Card misconduct.</p>';
-      return;
-    }
-    const team = gameData.teams.find(t => t.id === activeReportTeamId);
-    container.innerHTML = `
-      <div class="report-section">
-        <h4>Yellow Cards</h4>
-        <div id="report-Yellow Card-${team.id}"></div>
-        <button class="secondary add-event-btn" onclick="openReportPicker('${escapeJs(team.id)}', '${escapeJs(team.name)}', 'Yellow Card')">+ Add Yellow Card</button>
-      </div>
-      <div class="report-section">
-        <h4>Red Cards</h4>
-        <div id="report-Red Card-${team.id}"></div>
-        <button class="secondary add-event-btn" onclick="openReportPicker('${escapeJs(team.id)}', '${escapeJs(team.name)}', 'Red Card')">+ Add Red Card</button>
-      </div>
-    `;
-    renderReportList(team.id, 'Yellow Card');
-    renderReportList(team.id, 'Red Card');
-  }
-
-  function renderReportList(teamId, eventType) {
-    const el = document.getElementById('report-' + eventType + '-' + teamId);
+  // Yellow/Red Card lists are unified across both teams (not split per
+  // team) - each entry shows which team it belongs to.
+  function renderUnifiedReportList(eventType) {
+    const el = document.getElementById('report-' + eventType);
     if (!el) return;
-    const items = reportEntries.filter(e => e.teamId === teamId && e.eventType === eventType);
+    const items = reportEntries.filter(e => e.eventType === eventType);
     el.innerHTML = items.length
       ? items.map(e => {
           const idx = reportEntries.indexOf(e);
-          return `<div class="report-entry"><span>${escapeHtml(e.name)}${e.minute != null ? ' — min ' + e.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
+          return `<div class="report-entry"><span><strong>${escapeHtml(e.teamName)}:</strong> ${escapeHtml(e.name)}${e.minute != null ? ' — min ' + e.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
         }).join('')
       : '<div class="muted" style="font-size:12px;">None added yet.</div>';
   }
@@ -604,37 +570,67 @@
     if (entry.eventType === 'Goal') {
       renderGoalSlots(entry.teamId, entry.teamName);
     } else {
-      renderReportList(entry.teamId, entry.eventType);
+      renderUnifiedReportList(entry.eventType);
     }
   }
 
-  function openReportPicker(teamId, teamName, eventType) {
-    activeReportPicker = { teamId, teamName, eventType, pendingPerson: null };
-    document.getElementById('reportPickerTitle').textContent = teamName + ' — ' + eventType;
+  // Goal slots already know their team - straight to the person list.
+  function openGoalPicker(teamId, teamName) {
+    activeReportPicker = { teamId, teamName, eventType: 'Goal', pendingPerson: null, needsTeamChoice: false };
+    document.getElementById('reportPickerTitle').textContent = teamName + ' — Goal';
     renderReportPickerPersonList();
     document.getElementById('reportPickerOverlay').style.display = 'flex';
   }
 
+  // Yellow/Red Card sections are unified across both teams, so the picker's
+  // first step here is choosing which team the card belongs to.
+  function openMisconductPicker(eventType) {
+    activeReportPicker = { teamId: null, teamName: null, eventType, pendingPerson: null, needsTeamChoice: true };
+    document.getElementById('reportPickerTitle').textContent = 'Select Team — ' + eventType;
+    renderTeamChoiceForPicker();
+    document.getElementById('reportPickerOverlay').style.display = 'flex';
+  }
+
+  function renderTeamChoiceForPicker() {
+    const listEl = document.getElementById('reportPickerList');
+    listEl.innerHTML = gameData.teams.map(team => `
+      <div class="option" onclick="chooseTeamForPicker('${escapeJs(team.id)}', '${escapeJs(team.name)}')">
+        <div style="font-weight:700; color:var(--navy);">${escapeHtml(team.name)}</div>
+      </div>
+    `).join('');
+  }
+
+  function chooseTeamForPicker(teamId, teamName) {
+    activeReportPicker.teamId = teamId;
+    activeReportPicker.teamName = teamName;
+    document.getElementById('reportPickerTitle').textContent = teamName + ' — ' + activeReportPicker.eventType;
+    renderReportPickerPersonList();
+  }
+
   function closeReportPicker() {
     document.getElementById('reportPickerOverlay').style.display = 'none';
-    activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null };
+    activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null, needsTeamChoice: false };
   }
 
   // Only people actually checked in for this team appear here — pulled from
   // checkinState, not the full SportsEngine roster.
   function renderReportPickerPersonList() {
-    const { teamId } = activeReportPicker;
+    const { teamId, needsTeamChoice } = activeReportPicker;
     const listEl = document.getElementById('reportPickerList');
     const people = Object.entries(checkinState)
       .filter(([key]) => key.startsWith(teamId + ':'))
       .map(([key, val]) => ({ profileId: key.split(':')[1], ...val }));
 
+    const backLink = needsTeamChoice
+      ? `<a href="#" onclick="renderTeamChoiceForPicker(); return false;" class="back-link">← Back to team</a>`
+      : '';
+
     if (!people.length) {
-      listEl.innerHTML = '<p class="muted">No one checked in for this team yet — go to Check In first.</p>';
+      listEl.innerHTML = backLink + '<p class="muted">No one checked in for this team yet — go to Check In first.</p>';
       return;
     }
 
-    listEl.innerHTML = people.map(p => `
+    listEl.innerHTML = backLink + people.map(p => `
       <div class="option" onclick="pickReportPerson('${escapeJs(p.profileId)}')">
         <div style="font-weight:600;">${escapeHtml(p.name)}${p.personType === 'staff' ? ' <span class="pill" style="background:#F1EAD9; color:#7A5B12; padding:2px 8px; border-radius:10px; font-size:10.5px; font-weight:700;">STAFF</span>' : ''}</div>
         ${p.jerseyNumber ? `<div class="muted" style="font-size:12px;">#${escapeHtml(p.jerseyNumber)}</div>` : ''}
@@ -671,7 +667,7 @@
     if (eventType === 'Goal') {
       renderGoalSlots(teamId, teamName);
     } else {
-      renderReportList(teamId, eventType);
+      renderUnifiedReportList(eventType);
     }
     closeReportPicker();
   }
