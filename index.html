@@ -104,7 +104,8 @@
     <h2 style="margin-top:0; color:var(--navy);">Match Report</h2>
 
     <div class="section-label" style="margin-top:0;">Goals</div>
-    <div class="team-columns" id="scoreGoalColumns" style="margin-bottom:20px;"></div>
+    <div class="team-columns" id="scoreGoalColumns" style="margin-bottom:14px;"></div>
+    <div id="goalSlotsList" style="margin-bottom:20px;"></div>
 
     <div class="report-section">
       <h4>Yellow Cards</h4>
@@ -485,8 +486,8 @@
   // Top section: score input + goal slots together, for BOTH teams at once
   // (side-by-side on desktop, stacked on mobile via .team-columns).
   function renderScoreAndGoals() {
-    const container = document.getElementById('scoreGoalColumns');
-    container.innerHTML = gameData.teams.map(team => `
+    const scoreContainer = document.getElementById('scoreGoalColumns');
+    scoreContainer.innerHTML = gameData.teams.map(team => `
       <div>
         <h3 style="color:var(--navy); margin-bottom:6px;">${escapeHtml(team.name)}</h3>
         <div class="score-input-row">
@@ -494,9 +495,13 @@
           <input type="number" inputmode="numeric" min="0" id="score-${team.id}" value="${reportScores[team.id] != null ? reportScores[team.id] : ''}"
             onchange="onScoreChange('${escapeJs(team.id)}')" />
         </div>
-        <div id="report-Goal-${team.id}" style="margin-top:10px;"></div>
       </div>
     `).join('');
+
+    // Goal slots for both teams stack full-width, one after another, below
+    // the (side-by-side) score inputs - not split into two columns.
+    const goalsContainer = document.getElementById('goalSlotsList');
+    goalsContainer.innerHTML = gameData.teams.map(team => `<div id="report-Goal-${team.id}"></div>`).join('');
     gameData.teams.forEach(team => renderGoalSlots(team.id, team.name));
   }
 
