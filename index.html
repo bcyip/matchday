@@ -483,7 +483,8 @@
   }
 
   function onScoreChange(teamId) {
-    refreshGoalCounter(teamId);
+    const team = gameData.teams.find(t => t.id === teamId);
+    renderGoalSlots(teamId, team.name);
   }
 
   function currentScoreValue(teamId) {
@@ -496,40 +497,70 @@
     return reportEntries.filter(e => e.teamId === teamId && e.eventType === 'Goal').length;
   }
 
-  function refreshGoalCounter(teamId) {
-    const el = document.getElementById('goalCounter-' + teamId);
-    if (!el) return;
-    const score = currentScoreValue(teamId);
-    const count = goalCountForTeam(teamId);
-    if (score == null) {
-      el.textContent = 'Enter the score above first.';
-      el.classList.remove('at-cap');
-    } else {
-      el.textContent = count + ' of ' + score + ' goal(s) recorded';
-      el.classList.toggle('at-cap', count !== score);
-    }
-  }
-
   function renderReportColumns() {
     const container = document.getElementById('reportColumns');
     container.innerHTML = '';
     gameData.teams.forEach(team => {
       const col = document.createElement('div');
-      const eventTypes = ['Goal', 'Yellow Card', 'Red Card'];
-      col.innerHTML = eventTypes.map(type => `
+      col.innerHTML = `
         <div class="report-section">
-          <h4>${type}s</h4>
-          ${type === 'Goal' ? `<div class="cap-counter" id="goalCounter-${team.id}"></div>` : ''}
-          <div id="report-${type}-${team.id}"></div>
-          <button class="secondary add-event-btn" onclick="openReportPicker('${escapeJs(team.id)}', '${escapeJs(team.name)}', '${type}')">+ Add ${type}</button>
+          <h4>Goals</h4>
+          <div id="report-Goal-${team.id}"></div>
         </div>
-      `).join('');
+        <div class="report-section">
+          <h4>Yellow Cards</h4>
+          <div id="report-Yellow Card-${team.id}"></div>
+          <button class="secondary add-event-btn" onclick="openReportPicker('${escapeJs(team.id)}', '${escapeJs(team.name)}', 'Yellow Card')">+ Add Yellow Card</button>
+        </div>
+        <div class="report-section">
+          <h4>Red Cards</h4>
+          <div id="report-Red Card-${team.id}"></div>
+          <button class="secondary add-event-btn" onclick="openReportPicker('${escapeJs(team.id)}', '${escapeJs(team.name)}', 'Red Card')">+ Add Red Card</button>
+        </div>
+      `;
       container.appendChild(col);
     });
     gameData.teams.forEach(team => {
-      ['Goal', 'Yellow Card', 'Red Card'].forEach(type => renderReportList(team.id, type));
-      refreshGoalCounter(team.id);
+      renderGoalSlots(team.id, team.name);
+      renderReportList(team.id, 'Yellow Card');
+      renderReportList(team.id, 'Red Card');
     });
+  }
+
+  function goalEntriesForTeam(teamId) {
+    return reportEntries.filter(e => e.teamId === teamId && e.eventType === 'Goal');
+  }
+
+  // Renders exactly `score` goal slots for this team - one row per goal in
+  // the score, pre-listed and waiting to be filled. Clicking an empty slot
+  // opens the picker for that specific goal; no separate "+ Add Goal"
+  // button exists since the score itself determines how many are needed.
+  function renderGoalSlots(teamId, teamName) {
+    const el = document.getElementById('report-Goal-' + teamId);
+    if (!el) return;
+    const score = currentScoreValue(teamId);
+
+    if (score == null) {
+      el.innerHTML = '<div class="muted" style="font-size:12px;">Enter the score above to list goal slots.</div>';
+      return;
+    }
+    if (score === 0) {
+      el.innerHTML = '<div class="muted" style="font-size:12px;">No goals to record (score is 0).</div>';
+      return;
+    }
+
+    const goals = goalEntriesForTeam(teamId);
+    let html = '';
+    for (let i = 0; i < score; i++) {
+      const entry = goals[i];
+      if (entry) {
+        const idx = reportEntries.indexOf(entry);
+        html += `<div class="report-entry"><span>Goal ${i + 1}: ${escapeHtml(entry.name)}${entry.minute != null ? ' — min ' + entry.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
+      } else {
+        html += `<div class="option" style="margin-bottom:6px; text-align:center; color:var(--gray);" onclick="openReportPicker('${escapeJs(teamId)}', '${escapeJs(teamName)}', 'Goal')">+ Goal ${i + 1}: select player</div>`;
+      }
+    }
+    el.innerHTML = html;
   }
 
   function renderReportList(teamId, eventType) {
@@ -542,13 +573,16 @@
           return `<div class="report-entry"><span>${escapeHtml(e.name)}${e.minute != null ? ' — min ' + e.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
         }).join('')
       : '<div class="muted" style="font-size:12px;">None added yet.</div>';
-    if (eventType === 'Goal') refreshGoalCounter(teamId);
   }
 
   function removeReportEntry(idx) {
     const entry = reportEntries[idx];
     reportEntries.splice(idx, 1);
-    renderReportList(entry.teamId, entry.eventType);
+    if (entry.eventType === 'Goal') {
+      renderGoalSlots(entry.teamId, entry.teamName);
+    } else {
+      renderReportList(entry.teamId, entry.eventType);
+    }
   }
 
   function openReportPicker(teamId, teamName, eventType) {
@@ -611,7 +645,11 @@
       teamId, teamName, personType: pendingPerson.personType, profileId: pendingPerson.profileId,
       name: pendingPerson.name, eventType, minute,
     });
-    renderReportList(teamId, eventType);
+    if (eventType === 'Goal') {
+      renderGoalSlots(teamId, teamName);
+    } else {
+      renderReportList(teamId, eventType);
+    }
     closeReportPicker();
   }
 
