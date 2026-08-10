@@ -27,6 +27,8 @@
     @media (max-width: 480px) { .landing-buttons { flex-direction: column; } }
     .team-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     @media (max-width: 650px) { .team-columns { grid-template-columns: 1fr; } }
+    /* Goals stay side-by-side even on mobile, per requirement - overrides the general mobile-stacking rule above just for this section. */
+    @media (max-width: 650px) { #scoreGoalColumns { grid-template-columns: 1fr 1fr; gap: 10px; } }
     .team-col h3 { margin: 0 0 4px; color: var(--navy); }
     .cap-counter { font-size: 12.5px; color: var(--gray); margin-bottom: 10px; }
     .cap-counter.at-cap { color: var(--danger); font-weight: 600; }
@@ -101,6 +103,7 @@
     <a href="#" class="back-link" onclick="showLanding(); return false;">← Back</a>
     <h2 style="margin-top:0; color:var(--navy);">Match Report</h2>
 
+    <div class="section-label" style="margin-top:0;">Goals</div>
     <div class="team-columns" id="scoreGoalColumns" style="margin-bottom:20px;"></div>
 
     <div class="report-section">
@@ -491,8 +494,7 @@
           <input type="number" inputmode="numeric" min="0" id="score-${team.id}" value="${reportScores[team.id] != null ? reportScores[team.id] : ''}"
             onchange="onScoreChange('${escapeJs(team.id)}')" />
         </div>
-        <div class="section-label">Goals</div>
-        <div id="report-Goal-${team.id}"></div>
+        <div id="report-Goal-${team.id}" style="margin-top:10px;"></div>
       </div>
     `).join('');
     gameData.teams.forEach(team => renderGoalSlots(team.id, team.name));
@@ -522,6 +524,8 @@
   // opens the picker for that specific goal; no separate "+ Add Goal"
   // button exists since the score itself determines how many are needed.
   // (Goal slots already know their team - no team-choice step needed here.)
+  // Team name is embedded directly in each slot's label since the "Goals"
+  // header above is now shared across both teams, not repeated per column.
   function renderGoalSlots(teamId, teamName) {
     const el = document.getElementById('report-Goal-' + teamId);
     if (!el) return;
@@ -542,9 +546,9 @@
       const entry = goals[i];
       if (entry) {
         const idx = reportEntries.indexOf(entry);
-        html += `<div class="report-entry"><span>Goal ${i + 1}: ${escapeHtml(entry.name)}${entry.minute != null ? ' — min ' + entry.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
+        html += `<div class="report-entry"><span>Goal ${i + 1} ${escapeHtml(teamName)}: ${escapeHtml(entry.name)}${entry.minute != null ? ' — min ' + entry.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
       } else {
-        html += `<div class="option" style="margin-bottom:6px; text-align:center; color:var(--gray);" onclick="openGoalPicker('${escapeJs(teamId)}', '${escapeJs(teamName)}')">+ Goal ${i + 1}: select player</div>`;
+        html += `<div class="option" style="margin-bottom:6px; text-align:center; color:var(--gray);" onclick="openGoalPicker('${escapeJs(teamId)}', '${escapeJs(teamName)}')">Goal ${i + 1} ${escapeHtml(teamName)}: Select player</div>`;
       }
     }
     el.innerHTML = html;
