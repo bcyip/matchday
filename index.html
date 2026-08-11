@@ -685,9 +685,23 @@
   }
 
   function pickReportPerson(profileId) {
-    const key = activeReportPicker.teamId + ':' + profileId;
+    const { teamId, eventType } = activeReportPicker;
+    const key = teamId + ':' + profileId;
     const person = checkinState[key];
     if (!person) return;
+
+    // A player can't receive a 3rd Yellow Card - the 2nd already
+    // auto-generates a Red Card, so there's no valid 3rd.
+    if (eventType === 'Yellow Card') {
+      const existingYellows = reportEntries.filter(e =>
+        e.eventType === 'Yellow Card' && e.profileId === profileId && e.teamId === teamId
+      ).length;
+      if (existingYellows >= 2) {
+        alert(`${person.name} already has 2 Yellow Cards recorded (which results in a Red Card). A 3rd Yellow Card cannot be added.`);
+        return;
+      }
+    }
+
     activeReportPicker.pendingPerson = { profileId, name: person.name, personType: person.personType };
     renderMinutePicker();
   }
