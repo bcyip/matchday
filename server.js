@@ -1,540 +1,800 @@
-// Check-in / Match Report app server — Stage 1: foundation.
-//
-// ARCHITECTURE NOTE: unlike the earlier stat-tracking app, this server does
-// NOT expose a generic /api/graphql pass-through. This app needs a real
-// write mutation (updateScore) eventually, so instead every capability is
-// its own dedicated, purpose-built endpoint that does exactly one thing —
-// tighter than an operation-allowlist over a generic proxy, since there's
-// no "generic query shape" an attacker could probe at all.
-//
-// REQUIRED ENVIRONMENT VARIABLES:
-//   SE_CLIENT_ID, SE_CLIENT_SECRET, SE_REFRESH_TOKEN, SE_ORG_ID  - same as before
-//   DATABASE_URL       - Supabase (or later, DigitalOcean) Postgres connection string
-//   MAX_PLAYERS_CHECKIN - integer, max players that can be checked in per team
-//   MAX_STAFF_CHECKIN   - integer, max staff that can be checked in per team
-//   PORT               - (optional) most hosts set this automatically
-
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const https = require('https');
-const { Pool } = require('pg');
-
-const PORT = process.env.PORT || 8787;
-const HTML_FILE = path.join(__dirname, 'index.html');
-
-const SE_CLIENT_ID = process.env.SE_CLIENT_ID;
-const SE_CLIENT_SECRET = process.env.SE_CLIENT_SECRET;
-const SE_REFRESH_TOKEN = process.env.SE_REFRESH_TOKEN;
-const SE_ORG_ID = process.env.SE_ORG_ID;
-const GRAPHQL_ENDPOINT = 'https://api.sportsengine.com/graphql';
-
-const MAX_PLAYERS_CHECKIN = parseInt(process.env.MAX_PLAYERS_CHECKIN || '18', 10);
-const MAX_STAFF_CHECKIN = parseInt(process.env.MAX_STAFF_CHECKIN || '5', 10);
-
-// ---------- Postgres ----------
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  // Supabase's pooler requires SSL. rejectUnauthorized:false is a pragmatic
-  // default here (we're not bundling Supabase's CA cert) — acceptable given
-  // the connection string itself (with its embedded password) is the real
-  // secret being protected, same trust model as everything else in this app.
-  ssl: { rejectUnauthorized: false },
-});
-
-pool.on('error', (err) => {
-  console.error('[postgres] Unexpected error on idle client:', err.message);
-});
-
-// ---------- SportsEngine token management (same refresh pattern as before) ----------
-
-let tokenCache = { accessToken: null, expiresAt: 0 };
-
-function refreshAccessToken() {
-  return new Promise((resolve, reject) => {
-    if (!SE_CLIENT_ID || !SE_CLIENT_SECRET || !SE_REFRESH_TOKEN) {
-      return reject(new Error('Missing SE_CLIENT_ID / SE_CLIENT_SECRET / SE_REFRESH_TOKEN environment variables.'));
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>USCCS Match Day</title>
+  <style>
+    :root {
+      --navy: #11213F; --blue: #6BC4E8; --gold: #E7C247;
+      --bg: #F4F6FA; --border: #E1E5EC; --gray: #5A6472; --danger: #C0392B; --success: #1F7A4D;
     }
-    const body = JSON.stringify({
-      client_id: SE_CLIENT_ID,
-      client_secret: SE_CLIENT_SECRET,
-      refresh_token: SE_REFRESH_TOKEN,
-      grant_type: 'refresh_token',
-    });
-    const req = https.request(
-      {
-        hostname: 'user.sportsengine.com',
-        path: '/oauth/token',
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => (data += chunk));
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(data);
-            if (!json.access_token) return reject(new Error('Token refresh failed: ' + data));
-            tokenCache.accessToken = json.access_token;
-            tokenCache.expiresAt = Date.now() + (json.expires_in || 1800) * 1000 - 60000;
-            console.log('[auth] Refreshed SportsEngine access token, valid for', json.expires_in || 1800, 'seconds');
-            resolve(tokenCache.accessToken);
-          } catch (e) {
-            reject(new Error('Could not parse token response: ' + data));
-          }
-        });
-      }
-    );
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-}
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg); margin: 0; color: #1a1a1a; -webkit-tap-highlight-color: transparent; }
+    header { background: var(--navy); color: var(--gold); padding: 14px 20px; font-weight: 700; font-size: 18px; }
+    main { max-width: 800px; margin: 0 auto; padding: 20px; }
+    @media (max-width: 480px) { main { padding: 12px; } }
+    .card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+    @media (max-width: 480px) { .card { padding: 14px; border-radius: 8px; } }
+    .muted { color: var(--gray); font-size: 13px; }
+    .err { color: var(--danger); font-size: 13px; margin-top: 6px; }
+    button { padding: 12px 18px; min-height: 46px; border-radius: 8px; border: none; background: var(--navy); color: #fff; font-weight: 600; cursor: pointer; font-size: 14.5px; }
+    button.secondary { background: #fff; color: var(--navy); border: 1px solid var(--border); }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    button:hover:not(:disabled) { opacity: .9; }
+    .landing-buttons { display: flex; gap: 12px; margin-top: 14px; }
+    .landing-buttons button { flex: 1; padding: 20px; font-size: 16px; }
+    @media (max-width: 480px) { .landing-buttons { flex-direction: column; } }
+    .team-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 650px) { .team-columns { grid-template-columns: 1fr; } }
+    /* Goals stay side-by-side even on mobile, per requirement - overrides the general mobile-stacking rule above just for this section. */
+    @media (max-width: 650px) { #scoreGoalColumns { grid-template-columns: 1fr 1fr; gap: 10px; } }
+    .team-col h3 { margin: 0 0 4px; color: var(--navy); }
+    .cap-counter { font-size: 12.5px; color: var(--gray); margin-bottom: 10px; }
+    .cap-counter.at-cap { color: var(--danger); font-weight: 600; }
+    .roster-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); min-height: 44px; }
+    .roster-row.readonly { opacity: .5; }
+    .roster-row.readonly .rname { color: var(--gray); }
+    .roster-row input[type="checkbox"] { width: 24px; height: 24px; flex-shrink: 0; }
+    .roster-row .rname { flex: 1; font-size: 14.5px; }
+    .roster-row input[type="text"] { width: 52px; padding: 10px 4px; border: 1px solid var(--border); border-radius: 6px; text-align: center; font-size: 16px; min-height: 40px; }
+    .roster-row input:disabled { background: var(--bg); cursor: not-allowed; }
+    .team-select-tile { flex: 1; border: 2px solid var(--border); border-radius: 10px; padding: 18px 16px; text-align: center; cursor: pointer; user-select: none; min-height: 46px; display: flex; align-items: center; justify-content: center; }
+    .team-select-tile.selected { border-color: var(--navy); background: #F4F9FD; }
+    .team-select-tile .tname { font-weight: 700; color: var(--navy); font-size: 15px; }
+    .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--gray); margin: 14px 0 4px; }
+    .back-link { display: inline-block; margin-bottom: 14px; color: var(--navy); text-decoration: none; font-size: 13px; padding: 6px 0; }
+    .back-link:hover { text-decoration: underline; }
 
-async function getValidAccessToken() {
-  if (tokenCache.accessToken && Date.now() < tokenCache.expiresAt) {
-    return tokenCache.accessToken;
+    .modal-overlay { position: fixed; inset: 0; background: rgba(17,33,63,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
+    .modal-box { background: #fff; border-radius: 10px; padding: 20px; width: 100%; max-width: 420px; max-height: 85vh; overflow-y: auto; }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .modal-header h3 { margin: 0; color: var(--navy); font-size: 16px; }
+    .option { padding: 13px 14px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; cursor: pointer; min-height: 44px; }
+    .option:hover { border-color: var(--blue); background: #F4F9FD; }
+
+    .score-input-row { display: flex; align-items: center; gap: 10px; }
+    .score-input-row input { width: 76px; padding: 12px; font-size: 22px; text-align: center; border: 1px solid var(--border); border-radius: 8px; min-height: 46px; }
+
+    .report-section { margin-top: 12px; }
+    .report-section h4 { margin: 0 0 6px; font-size: 13px; color: var(--gray); text-transform: uppercase; letter-spacing: .03em; }
+    .report-entry { display: flex; align-items: center; justify-content: space-between; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-bottom: 6px; font-size: 14px; min-height: 40px; }
+    .report-entry button { padding: 6px 12px; font-size: 13px; background: transparent; color: var(--danger); border: none; min-height: 32px; }
+    .add-event-btn { width: 100%; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+<header>USCCS Match Day</header>
+
+<main>
+  <div id="loadingState" class="card">
+    <p class="muted">Loading game...</p>
+  </div>
+
+  <div id="errorState" class="card" style="display:none;">
+    <p class="err" id="errorText"></p>
+  </div>
+
+  <!-- LANDING: game info + Check In / Match Report choice -->
+  <div id="landingView" class="card" style="display:none;">
+    <h2 id="gameTitle" style="margin-top:0; color:var(--navy);"></h2>
+    <p class="muted" id="gameSubtitle"></p>
+    <div class="landing-buttons">
+      <button onclick="showCheckIn()">Check In</button>
+      <button id="matchReportBtn" class="secondary" disabled onclick="showMatchReport()">Submit Match Report</button>
+    </div>
+    <p class="muted" style="margin-top:10px;" id="matchReportGateNote">Complete Check-In for at least one player before Match Report unlocks.</p>
+  </div>
+
+  <!-- CHECK-IN VIEW -->
+  <div id="checkInView" class="card" style="display:none;">
+    <a href="#" class="back-link" onclick="showLanding(); return false;">← Back</a>
+    <h2 style="margin-top:0; color:var(--navy);">Check In</h2>
+
+    <div class="section-label">Select a team</div>
+    <div id="teamSelector" style="display:flex; gap:10px; margin-bottom:16px;"></div>
+
+    <div id="activeTeamRoster"></div>
+  </div>
+
+  <!-- MATCH REPORT VIEW -->
+  <div id="matchReportView" class="card" style="display:none;">
+    <a href="#" class="back-link" onclick="showLanding(); return false;">← Back</a>
+    <h2 style="margin-top:0; color:var(--navy);">Match Report</h2>
+
+    <div class="section-label" style="margin-top:0;">Goals</div>
+    <div class="team-columns" id="scoreGoalColumns" style="margin-bottom:14px;"></div>
+    <div id="goalSlotsList" style="margin-bottom:20px;"></div>
+
+    <div class="report-section">
+      <h4>Yellow Cards</h4>
+      <div id="report-Yellow Card"></div>
+      <button class="secondary add-event-btn" onclick="openMisconductPicker('Yellow Card')">+ Add Yellow Card</button>
+    </div>
+    <div class="report-section">
+      <h4>Red Cards</h4>
+      <div id="report-Red Card"></div>
+      <button class="secondary add-event-btn" onclick="openMisconductPicker('Red Card')">+ Add Red Card</button>
+    </div>
+
+    <button id="submitReportBtn" style="width:100%; margin-top:18px; padding:14px; font-size:15px;" onclick="submitMatchReport()">Submit Match Report</button>
+    <div id="reportSubmitResult" style="margin-top:10px;"></div>
+  </div>
+
+  <!-- MATCH REPORT PLAYER PICKER MODAL -->
+  <div id="reportPickerOverlay" class="modal-overlay" style="display:none;" onclick="if(event.target===this) closeReportPicker()">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="reportPickerTitle">Select</h3>
+        <button class="secondary" onclick="closeReportPicker()">✕</button>
+      </div>
+      <div id="reportPickerList" style="max-height:340px; overflow-y:auto;"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const gameId = params.get('game');
+
+  let gameData = null;
+  let config = { maxPlayers: 18, maxStaff: 5 };
+  let checkinState = {}; // teamId:profileId -> { jerseyNumber, personType }
+
+  function showError(msg) {
+    document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('errorState').style.display = 'block';
+    document.getElementById('errorText').textContent = msg;
   }
-  return refreshAccessToken();
-}
 
-async function callGraphQL(query, variables) {
-  const token = await getValidAccessToken();
-  const body = JSON.stringify({ query, variables });
-
-  return new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        hostname: 'api.sportsengine.com',
-        path: '/graphql',
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-          Authorization: 'Bearer ' + token,
-        },
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => (data += chunk));
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(data);
-            if (json.errors) return reject(new Error('GraphQL error: ' + JSON.stringify(json.errors)));
-            resolve(json.data);
-          } catch (e) {
-            reject(new Error('Non-JSON response from SportsEngine: ' + data.slice(0, 200)));
-          }
-        });
-      }
-    );
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-}
-
-// ---------- Dedicated endpoint: resolve a game deep-link + both rosters ----------
-
-async function fetchGameWithRosters(gameId) {
-  const eventQuery = `
-    query Event($id: String!) {
-      event(id: $id) {
-        id
-        name
-        start
-        location { name }
-        eventTeams { name homeTeam team { id } }
-      }
-    }`;
-  const eventData = await callGraphQL(eventQuery, { id: gameId });
-  const event = eventData.event;
-  if (!event) throw new Error('No event found for game ID: ' + gameId);
-
-  const teamIds = (event.eventTeams || []).map((t) => t.team && t.team.id).filter(Boolean);
-  if (teamIds.length !== 2) {
-    console.warn('[fetchGameWithRosters] Expected 2 teams, found', teamIds.length, 'for game', gameId);
+  function showLanding() {
+    document.getElementById('checkInView').style.display = 'none';
+    document.getElementById('matchReportView').style.display = 'none';
+    closeReportPicker(); // force-close in case a picker modal was left open
+    document.getElementById('landingView').style.display = 'block';
   }
 
-  const rosterQuery = `
-    query Team($id: String!) {
-      team(id: $id) {
-        id
-        name
-        players { firstName lastName jerseyNumber profileId rosterStatus }
-        staff { firstName lastName profileId title }
-      }
-    }`;
-
-  const teams = [];
-  for (const teamId of teamIds) {
-    const data = await callGraphQL(rosterQuery, { id: teamId });
-    teams.push(data.team);
-  }
-
-  return { event, teams };
-}
-
-// ---------- Server ----------
-
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, 'http://localhost');
-
-  // GET /api/config — expose the configured caps to the frontend
-  if (req.method === 'GET' && url.pathname === '/api/config') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ maxPlayers: MAX_PLAYERS_CHECKIN, maxStaff: MAX_STAFF_CHECKIN }));
-    return;
-  }
-
-  // GET /api/game/:gameId — deep-link resolution: event info + both rosters
-  const gameMatch = url.pathname.match(/^\/api\/game\/([^/]+)$/);
-  if (req.method === 'GET' && gameMatch) {
-    const gameId = decodeURIComponent(gameMatch[1]);
-    try {
-      const result = await fetchGameWithRosters(gameId);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(result));
-    } catch (err) {
-      console.error('[api/game] Error:', err.message);
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+  async function init() {
+    if (!gameId) {
+      showError('No ?game=<uid> parameter in the URL.');
+      return;
     }
-    return;
-  }
 
-  // GET /api/checkins/:gameId — current check-in state for this game (both teams), plus per-team completion status
-  const checkinsGetMatch = url.pathname.match(/^\/api\/checkins\/([^/]+)$/);
-  if (req.method === 'GET' && checkinsGetMatch) {
-    const gameId = decodeURIComponent(checkinsGetMatch[1]);
     try {
-      const [checkinsResult, completionResult] = await Promise.all([
-        pool.query(
-          'SELECT game_id, team_id, team_name, person_type, profile_id, name, jersey_number FROM checkins WHERE game_id = $1 ORDER BY team_id, person_type, name',
-          [gameId]
-        ),
-        pool.query('SELECT team_id FROM checkin_completion WHERE game_id = $1 AND completed = true', [gameId]),
+      const [configRes, gameRes] = await Promise.all([
+        fetch('/api/config').then(r => r.json()),
+        fetch('/api/game/' + encodeURIComponent(gameId)).then(r => r.json()),
       ]);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        checkins: checkinsResult.rows,
-        completedTeamIds: completionResult.rows.map(r => r.team_id),
-      }));
-    } catch (err) {
-      console.error('[api/checkins GET] Error:', err.message);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+
+      if (gameRes.error) { showError(gameRes.error); return; }
+
+      config = configRes;
+      gameData = gameRes;
+
+      await loadCheckinState();
+      await loadMatchReportState();
+
+      document.getElementById('loadingState').style.display = 'none';
+      document.getElementById('landingView').style.display = 'block';
+
+      const teamNames = (gameData.event.eventTeams || []).map(t => t.name).join(' vs ');
+      document.getElementById('gameTitle').textContent = gameData.event.name || teamNames || 'Untitled Game';
+      const startStr = gameData.event.start ? new Date(gameData.event.start).toLocaleString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }) : '';
+      document.getElementById('gameSubtitle').textContent = [startStr, gameData.event.location && gameData.event.location.name].filter(Boolean).join(' · ');
+
+      updateMatchReportGate();
+    } catch (e) {
+      showError('Failed to load: ' + e.message);
     }
-    return;
   }
 
-  // POST /api/checkin-complete — mark (or unmark) a team's check-in as done.
-  // A persisted flag, not just client-side state, so reloading the page or
-  // coming back later correctly shows the team as already checked in.
-  if (req.method === 'POST' && url.pathname === '/api/checkin-complete') {
-    let body = '';
-    req.on('data', (chunk) => (body += chunk));
-    req.on('end', async () => {
-      let payload;
-      try {
-        payload = JSON.parse(body);
-      } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Invalid JSON body' }));
-      }
-      const { gameId, teamId, teamName, completed } = payload;
-      if (!gameId || !teamId || !teamName || typeof completed !== 'boolean') {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Missing gameId, teamId, teamName, or completed (boolean).' }));
-      }
-      try {
-        await pool.query(
-          `INSERT INTO checkin_completion (game_id, team_id, team_name, completed, completed_at)
-           VALUES ($1, $2, $3, $4, now())
-           ON CONFLICT (game_id, team_id) DO UPDATE SET completed = EXCLUDED.completed, completed_at = now(), team_name = EXCLUDED.team_name`,
-          [gameId, teamId, teamName, completed]
-        );
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true }));
-      } catch (err) {
-        console.error('[api/checkin-complete POST] Error:', err.message);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
-      }
+  let teamDoneState = {}; // teamId -> boolean, now persisted server-side via /api/checkin-complete
+
+  async function loadCheckinState() {
+    const res = await fetch('/api/checkins/' + encodeURIComponent(gameId));
+    const data = await res.json();
+    checkinState = {};
+    (data.checkins || []).forEach(c => {
+      checkinState[c.team_id + ':' + c.profile_id] = { jerseyNumber: c.jersey_number, personType: c.person_type, name: c.name };
     });
-    return;
+    teamDoneState = {};
+    (data.completedTeamIds || []).forEach(teamId => { teamDoneState[teamId] = true; });
   }
 
-  // POST /api/checkin — add/update or remove one person's check-in status
-  if (req.method === 'POST' && url.pathname === '/api/checkin') {
-    let body = '';
-    req.on('data', (chunk) => (body += chunk));
-    req.on('end', async () => {
-      let payload;
-      try {
-        payload = JSON.parse(body);
-      } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Invalid JSON body' }));
-      }
-
-      const { gameId, teamId, teamName, personType, profileId, name, jerseyNumber, action } = payload;
-
-      if (!gameId || !teamId || !teamName || !personType || !profileId || !name || !action) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Missing required field(s).' }));
-      }
-      if (!['player', 'staff'].includes(personType)) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'personType must be "player" or "staff".' }));
-      }
-      if (!['add', 'remove'].includes(action)) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'action must be "add" or "remove".' }));
-      }
-
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-
-        if (action === 'remove') {
-          await client.query(
-            'DELETE FROM checkins WHERE game_id = $1 AND team_id = $2 AND profile_id = $3',
-            [gameId, teamId, profileId]
-          );
-          await client.query('COMMIT');
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: true }));
-        }
-
-        // action === 'add' — check whether this person is already checked in
-        // (an update, doesn't count against the cap) vs. a genuinely new
-        // check-in (does count, and must be validated against the cap).
-        const existing = await client.query(
-          'SELECT 1 FROM checkins WHERE game_id = $1 AND team_id = $2 AND profile_id = $3',
-          [gameId, teamId, profileId]
-        );
-        const isNewCheckin = existing.rowCount === 0;
-
-        // Serialize concurrent attempts for this exact game+team+personType
-        // group using an advisory lock - covers both the jersey-duplicate
-        // check and the cap check below, so two simultaneous requests can't
-        // both slip past either one at once. (FOR UPDATE can't be combined
-        // with COUNT(*) - it's an aggregate, not real rows to lock - so an
-        // advisory lock is the correct tool here.) Auto-released at COMMIT/
-        // ROLLBACK, no separate unlock call needed.
-        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [gameId + ':' + teamId + ':' + personType]);
-
-        // Players can't share a jersey number with another checked-in
-        // player on the same team. Checked on every add - both a brand new
-        // check-in AND a jersey-number change for someone already checked
-        // in - since either could introduce a collision.
-        if (personType === 'player' && jerseyNumber) {
-          const dupCheck = await client.query(
-            'SELECT name FROM checkins WHERE game_id = $1 AND team_id = $2 AND person_type = $3 AND jersey_number = $4 AND profile_id != $5',
-            [gameId, teamId, personType, jerseyNumber, profileId]
-          );
-          if (dupCheck.rowCount > 0) {
-            await client.query('ROLLBACK');
-            res.writeHead(409, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ error: `Jersey number ${jerseyNumber} is already assigned to ${dupCheck.rows[0].name} on this team.` }));
-          }
-        }
-
-        if (isNewCheckin) {
-          const cap = personType === 'player' ? MAX_PLAYERS_CHECKIN : MAX_STAFF_CHECKIN;
-          const countResult = await client.query(
-            'SELECT COUNT(*) FROM checkins WHERE game_id = $1 AND team_id = $2 AND person_type = $3',
-            [gameId, teamId, personType]
-          );
-          const currentCount = parseInt(countResult.rows[0].count, 10);
-          if (currentCount >= cap) {
-            await client.query('ROLLBACK');
-            res.writeHead(409, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ error: `Cap reached (${cap} ${personType}s already checked in for this team).` }));
-          }
-        }
-
-        await client.query(
-          `INSERT INTO checkins (game_id, team_id, team_name, person_type, profile_id, name, jersey_number, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, now())
-           ON CONFLICT (game_id, team_id, profile_id)
-           DO UPDATE SET jersey_number = EXCLUDED.jersey_number, name = EXCLUDED.name, updated_at = now()`,
-          [gameId, teamId, teamName, personType, profileId, name, jerseyNumber || null]
-        );
-
-        await client.query('COMMIT');
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true }));
-      } catch (err) {
-        await client.query('ROLLBACK');
-        console.error('[api/checkin POST] Error:', err.message);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
-      } finally {
-        client.release();
-      }
-    });
-    return;
+  function updateMatchReportGate() {
+    const anyCheckedIn = Object.keys(checkinState).length > 0;
+    document.getElementById('matchReportBtn').disabled = !anyCheckedIn;
+    document.getElementById('matchReportGateNote').style.display = anyCheckedIn ? 'none' : 'block';
   }
 
-  // GET /api/match-report/:gameId — read back an existing submitted report, if any
-  const matchReportGetMatch = url.pathname.match(/^\/api\/match-report\/([^/]+)$/);
-  if (req.method === 'GET' && matchReportGetMatch) {
-    const gameId = decodeURIComponent(matchReportGetMatch[1]);
+  function showCheckIn() {
+    document.getElementById('landingView').style.display = 'none';
+    document.getElementById('matchReportView').style.display = 'none';
+    closeReportPicker();
+    document.getElementById('checkInView').style.display = 'block';
+    renderTeamSelector();
+  }
+
+  let activeCheckinTeamId = null; // which team's roster is currently visible - only ever one at a time
+
+  // The tiles ARE the switcher — clicking one shows that team's roster now,
+  // clicking the other switches to it. No separate selection step or tabs.
+  function renderTeamSelector() {
+    const container = document.getElementById('teamSelector');
+    container.innerHTML = gameData.teams.map(team => `
+      <div class="team-select-tile ${activeCheckinTeamId === team.id ? 'selected' : ''}"
+        onclick="selectActiveTeam('${escapeJs(team.id)}')">
+        <div class="tname">${escapeHtml(team.name)}</div>
+      </div>
+    `).join('');
+    renderActiveRoster();
+  }
+
+  function selectActiveTeam(teamId) {
+    activeCheckinTeamId = teamId;
+    renderTeamSelector();
+  }
+
+  // Renders ONLY the currently active team's roster - never both at once,
+  // even when both teams are selected (use the tabs above to switch).
+  function renderActiveRoster() {
+    const container = document.getElementById('activeTeamRoster');
+    if (!activeCheckinTeamId) {
+      container.innerHTML = '<p class="muted">Select a team above to begin check-in.</p>';
+      return;
+    }
+
+    const team = gameData.teams.find(t => t.id === activeCheckinTeamId);
+    const playerCount = countCheckedIn(team.id, 'player');
+    const staffCount = countCheckedIn(team.id, 'staff');
+    const isDone = !!teamDoneState[team.id];
+
+    container.innerHTML = `
+      ${isDone ? `
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+          <div style="font-size:14px; font-weight:700; color:var(--success);">✓ Check-In Complete — ${escapeHtml(team.name)}</div>
+          <button class="secondary" onclick="editTeamCheckin('${escapeJs(team.id)}')">Edit</button>
+        </div>
+      ` : `<p class="muted" style="margin-top:0;">Enter a player's jersey number to check them in. Clear the number to remove them.</p>`}
+      <div class="section-label">Staff</div>
+      <div class="cap-counter" id="staffCap-${team.id}">${staffCount} of ${config.maxStaff} checked in</div>
+      <div id="staff-${team.id}"></div>
+      <div class="section-label">Players</div>
+      <div class="cap-counter" id="playerCap-${team.id}">${playerCount} of ${config.maxPlayers} checked in</div>
+      <div id="players-${team.id}"></div>
+      ${!isDone ? `<button style="width:100%; margin-top:14px;" onclick="markTeamDone('${escapeJs(team.id)}')">Done — ${escapeHtml(team.name)} Check-In Complete</button>` : ''}
+    `;
+
+    renderRosterList(team.id, team.name, 'staff-' + team.id, team.staff || [], 'staff', isDone);
+    renderRosterList(team.id, team.name, 'players-' + team.id, team.players || [], 'player', isDone);
+  }
+
+  async function markTeamDone(teamId) {
+    const team = gameData.teams.find(t => t.id === teamId);
+    teamDoneState[teamId] = true; // optimistic - update UI immediately
+    renderActiveRoster();
+    const ok = await setTeamCompletion(teamId, team.name, true);
+    if (!ok) {
+      teamDoneState[teamId] = false; // roll back on failure
+      renderActiveRoster();
+    }
+  }
+
+  async function editTeamCheckin(teamId) {
+    const team = gameData.teams.find(t => t.id === teamId);
+    teamDoneState[teamId] = false;
+    renderActiveRoster();
+    const ok = await setTeamCompletion(teamId, team.name, false);
+    if (!ok) {
+      teamDoneState[teamId] = true; // roll back on failure
+      renderActiveRoster();
+    }
+  }
+
+  async function setTeamCompletion(teamId, teamName, completed) {
     try {
-      const scoresResult = await pool.query('SELECT * FROM match_report_scores WHERE game_id = $1', [gameId]);
-      const entriesResult = await pool.query(
-        'SELECT team_id, team_name, person_type, profile_id, name, event_type, minute FROM match_report_entries WHERE game_id = $1 ORDER BY minute NULLS LAST',
-        [gameId]
+      const res = await fetch('/api/checkin-complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId, teamId, teamName, completed }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        alert(json.error || 'Failed to save check-in status.');
+        return false;
+      }
+      return true;
+    } catch (e) {
+      alert('Network error: ' + e.message);
+      return false;
+    }
+  }
+
+  function countCheckedIn(teamId, personType) {
+    return Object.entries(checkinState).filter(([key, val]) =>
+      key.startsWith(teamId + ':') && val.personType === personType
+    ).length;
+  }
+
+  function renderRosterList(teamId, teamName, containerId, people, personType, readOnly) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = people.map(p => {
+      const profileId = p.profileId;
+      const name = (p.firstName + ' ' + p.lastName).trim();
+      const key = teamId + ':' + profileId;
+      const isChecked = !!checkinState[key];
+      const currentJersey = isChecked ? (checkinState[key].jerseyNumber || '') : '';
+      const disabledAttr = readOnly ? 'disabled' : '';
+
+      const control = personType === 'player'
+        ? `<input type="text" inputmode="numeric" maxlength="2" placeholder="#" value="${escapeHtml(currentJersey)}"
+             id="jersey-${key}" ${disabledAttr}
+             onchange="onPlayerJerseyInput('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${escapeJs(profileId)}', '${escapeJs(name)}')" />`
+        : `<input type="checkbox" id="chk-${key}" ${isChecked ? 'checked' : ''} ${disabledAttr}
+             onchange="onStaffCheckToggle('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${escapeJs(profileId)}', '${escapeJs(name)}', this.checked)" />`;
+
+      return `
+        <div>
+          <div class="roster-row ${readOnly ? 'readonly' : ''}">
+            ${control}
+            <span class="rname">${escapeHtml(name)}</span>
+          </div>
+          <div class="row-error" id="err-${key}" style="display:none; color:var(--danger); font-size:11.5px; margin:-4px 0 4px;"></div>
+        </div>`;
+    }).join('') || `<p class="muted">No ${personType === 'staff' ? 'coaches' : 'players'} rostered.</p>`;
+  }
+
+  // Players: entering a jersey number IS the check-in action - no separate
+  // checkbox. Clearing the number removes them.
+  async function onPlayerJerseyInput(teamId, teamName, profileId, name) {
+    const key = teamId + ':' + profileId;
+    const jerseyEl = document.getElementById('jersey-' + key);
+    const errEl = document.getElementById('err-' + key);
+    const jerseyNumber = jerseyEl.value.trim();
+    if (errEl) errEl.style.display = 'none';
+
+    const wasCheckedIn = !!checkinState[key];
+
+    if (jerseyNumber) {
+      // Quick client-side check for an immediate response - the server
+      // still enforces this too (source of truth, and safe under
+      // simultaneous requests from two different people).
+      const duplicate = Object.entries(checkinState).find(([otherKey, val]) =>
+        otherKey !== key && otherKey.startsWith(teamId + ':') && val.personType === 'player' && val.jerseyNumber === jerseyNumber
       );
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ scores: scoresResult.rows[0] || null, entries: entriesResult.rows }));
-    } catch (err) {
-      console.error('[api/match-report GET] Error:', err.message);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+      if (duplicate) {
+        jerseyEl.value = wasCheckedIn ? checkinState[key].jerseyNumber : '';
+        if (errEl) { errEl.textContent = `Jersey number ${jerseyNumber} is already assigned to ${duplicate[1].name}.`; errEl.style.display = 'block'; }
+        return;
+      }
+
+      const ok = await submitCheckin(teamId, teamName, 'player', profileId, name, jerseyNumber, 'add');
+      if (!ok) {
+        jerseyEl.value = wasCheckedIn ? checkinState[key].jerseyNumber : ''; // revert on failure (e.g. cap reached or server-side duplicate catch)
+        return;
+      }
+      checkinState[key] = { jerseyNumber, personType: 'player', name };
+    } else if (wasCheckedIn) {
+      await submitCheckin(teamId, teamName, 'player', profileId, name, null, 'remove');
+      delete checkinState[key];
     }
-    return;
+
+    refreshCounters(teamId);
+    updateMatchReportGate();
   }
 
-  // POST /api/match-report — the big submit: saves to Postgres, then pushes
-  // the final score to SportsEngine via the real updateScore mutation.
-  if (req.method === 'POST' && url.pathname === '/api/match-report') {
-    let body = '';
-    req.on('data', (chunk) => (body += chunk));
-    req.on('end', async () => {
-      let payload;
-      try {
-        payload = JSON.parse(body);
-      } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+  // Staff: unchanged simple checkbox toggle - no jersey number concept for them.
+  async function onStaffCheckToggle(teamId, teamName, profileId, name, isChecked) {
+    const key = teamId + ':' + profileId;
+    const checkboxEl = document.getElementById('chk-' + key);
+
+    if (isChecked) {
+      const ok = await submitCheckin(teamId, teamName, 'staff', profileId, name, null, 'add');
+      if (!ok) {
+        checkboxEl.checked = false; // revert on failure (e.g. cap reached)
+        return;
       }
+      checkinState[key] = { jerseyNumber: null, personType: 'staff', name };
+    } else {
+      await submitCheckin(teamId, teamName, 'staff', profileId, name, null, 'remove');
+      delete checkinState[key];
+    }
 
-      const { gameId, team1, team2, entries } = payload;
-
-      // --- Validation ---
-      if (!gameId || !team1 || !team2 || !Array.isArray(entries)) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Missing gameId, team1, team2, or entries.' }));
-      }
-      for (const t of [team1, team2]) {
-        if (!t.id || !t.name || !Number.isInteger(t.score) || t.score < 0) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: 'Each team needs id, name, and a non-negative integer score.' }));
-        }
-      }
-      const VALID_EVENT_TYPES = ['Goal', 'Yellow Card', 'Red Card'];
-      for (const e of entries) {
-        if (!e.teamId || !e.teamName || !e.personType || !e.profileId || !e.name || !VALID_EVENT_TYPES.includes(e.eventType)) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: 'Each entry needs teamId, teamName, personType, profileId, name, and a valid eventType.' }));
-        }
-        if (e.minute != null && (!Number.isInteger(e.minute) || e.minute < 0)) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: 'minute must be a non-negative integer or null.' }));
-        }
-      }
-
-      // --- Save to Postgres first (our own data, fully under our control).
-      // Scores are upserted (a resubmission corrects the prior one); entries
-      // are fully replaced for this game (the submission is the authoritative
-      // complete set, not an incremental add). ---
-      const client = await pool.connect();
-      let postgresSaved = false;
-      try {
-        await client.query('BEGIN');
-
-        await client.query(
-          `INSERT INTO match_report_scores (game_id, team1_id, team1_name, team1_score, team2_id, team2_name, team2_score, submitted_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, now())
-           ON CONFLICT (game_id) DO UPDATE SET
-             team1_id = EXCLUDED.team1_id, team1_name = EXCLUDED.team1_name, team1_score = EXCLUDED.team1_score,
-             team2_id = EXCLUDED.team2_id, team2_name = EXCLUDED.team2_name, team2_score = EXCLUDED.team2_score,
-             submitted_at = now()`,
-          [gameId, team1.id, team1.name, team1.score, team2.id, team2.name, team2.score]
-        );
-
-        await client.query('DELETE FROM match_report_entries WHERE game_id = $1', [gameId]);
-        for (const e of entries) {
-          await client.query(
-            `INSERT INTO match_report_entries (game_id, team_id, team_name, person_type, profile_id, name, event_type, minute, submitted_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
-            [gameId, e.teamId, e.teamName, e.personType, e.profileId, e.name, e.eventType, e.minute ?? null]
-          );
-        }
-
-        await client.query('COMMIT');
-        postgresSaved = true;
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {}); // don't let a rollback failure mask the real error
-        console.error('[api/match-report POST] Postgres error:', err.message);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Failed to save report: ' + err.message }));
-      } finally {
-        client.release();
-      }
-
-      // --- Push the score to SportsEngine. This is reported separately from
-      // the Postgres save above, since the two are different systems with no
-      // shared transaction - if this fails, the detailed report is still
-      // safely saved and the score push can be retried without re-entering
-      // everything. ---
-      let scoreUpdated = false;
-      let scoreError = null;
-      try {
-        const mutation = `
-          mutation UpdateScore($eventId: ID!, $s1: String!, $s2: String!) {
-            updateScore(eventId: $eventId, scoreTeam1: $s1, scoreTeam2: $s2) {
-              name
-              eventTeams { name score }
-            }
-          }`;
-        await callGraphQL(mutation, { eventId: gameId, s1: String(team1.score), s2: String(team2.score) });
-        scoreUpdated = true;
-      } catch (err) {
-        console.error('[api/match-report POST] updateScore error:', err.message);
-        scoreError = err.message;
-      }
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, postgresSaved, scoreUpdated, scoreError }));
-    });
-    return;
+    refreshCounters(teamId);
+    updateMatchReportGate();
   }
 
-  if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
-    fs.readFile(HTML_FILE, 'utf8', (err, data) => {
-      if (err) {
-        res.writeHead(404);
-        return res.end('index.html not found — make sure it is in the same folder as server.js');
-      }
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(data);
-    });
-    return;
-  }
-
-  res.writeHead(404);
-  res.end('Not found');
-});
-
-server.listen(PORT, async () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`MAX_PLAYERS_CHECKIN=${MAX_PLAYERS_CHECKIN}, MAX_STAFF_CHECKIN=${MAX_STAFF_CHECKIN}`);
-  if (!SE_REFRESH_TOKEN) {
-    console.warn('WARNING: no SE_REFRESH_TOKEN set. SportsEngine calls will fail until this is configured.');
-  }
-  if (!process.env.DATABASE_URL) {
-    console.warn('WARNING: no DATABASE_URL set. Database calls will fail until this is configured.');
-  } else {
+  async function submitCheckin(teamId, teamName, personType, profileId, name, jerseyNumber, action) {
     try {
-      await pool.query('SELECT 1');
-      console.log('[postgres] Connected successfully.');
-    } catch (err) {
-      console.error('[postgres] Connection test FAILED:', err.message);
+      const res = await fetch('/api/checkin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId, teamId, teamName, personType, profileId, name, jerseyNumber, action }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        alert(json.error || 'Check-in failed.');
+        return false;
+      }
+      return true;
+    } catch (e) {
+      alert('Network error: ' + e.message);
+      return false;
     }
   }
-});
+
+  function refreshCounters(teamId) {
+    const playerCount = countCheckedIn(teamId, 'player');
+    const staffCount = countCheckedIn(teamId, 'staff');
+
+    const playerCapEl = document.getElementById('playerCap-' + teamId);
+    playerCapEl.textContent = playerCount + ' of ' + config.maxPlayers + ' checked in';
+    playerCapEl.classList.toggle('at-cap', playerCount >= config.maxPlayers);
+
+    const staffCapEl = document.getElementById('staffCap-' + teamId);
+    staffCapEl.textContent = staffCount + ' of ' + config.maxStaff + ' checked in';
+    staffCapEl.classList.toggle('at-cap', staffCount >= config.maxStaff);
+
+    // Once a team hits its cap, disable only the still-empty jersey fields
+    // (new check-ins) - fields that already have a number stay editable so
+    // existing entries can still be corrected or cleared.
+    document.querySelectorAll(`#players-${teamId} input[type="text"]`).forEach(inp => {
+      if (!inp.value.trim()) inp.disabled = playerCount >= config.maxPlayers;
+    });
+    document.querySelectorAll(`#staff-${teamId} input[type="checkbox"]`).forEach(cb => {
+      if (!cb.checked) cb.disabled = staffCount >= config.maxStaff;
+    });
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function escapeJs(str) {
+    return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  }
+
+  // ---------- Match Report ----------
+
+  const YELLOW_CARD_REASONS = ['Unsporting Behavior', 'Delaying the Restart', 'Failure to Respect Distance', 'Persistent Offense', 'Dissent', 'Entering/Leaving Field of Play', "Excessively using the 'review' signal"];
+  const RED_CARD_REASONS = ['2nd Caution', 'Serious Foul Play', 'DOGSO-F', 'DOGSO-H', 'Violent Conduct', 'Abusive Language', 'Biting or Spitting'];
+
+  let reportScores = {}; // teamId -> score
+  let reportEntries = []; // {teamId, teamName, personType, profileId, name, eventType, minute, reason}
+  let activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null, needsTeamChoice: false };
+
+  async function loadMatchReportState() {
+    const res = await fetch('/api/match-report/' + encodeURIComponent(gameId));
+    const data = await res.json();
+    reportScores = {};
+    if (data.scores) {
+      reportScores[data.scores.team1_id] = data.scores.team1_score;
+      reportScores[data.scores.team2_id] = data.scores.team2_score;
+    }
+    reportEntries = (data.entries || []).map(e => ({
+      teamId: e.team_id, teamName: e.team_name, personType: e.person_type,
+      profileId: e.profile_id, name: e.name, eventType: e.event_type, minute: e.minute, reason: e.reason,
+    }));
+  }
+
+  function showMatchReport() {
+    document.getElementById('landingView').style.display = 'none';
+    document.getElementById('checkInView').style.display = 'none';
+    document.getElementById('matchReportView').style.display = 'block';
+    renderScoreAndGoals();
+    renderUnifiedReportList('Yellow Card');
+    renderUnifiedReportList('Red Card');
+  }
+
+  // Top section: score input + goal slots together, for BOTH teams at once
+  // (side-by-side on desktop, stacked on mobile via .team-columns).
+  function renderScoreAndGoals() {
+    const scoreContainer = document.getElementById('scoreGoalColumns');
+    scoreContainer.innerHTML = gameData.teams.map(team => `
+      <div>
+        <h3 style="color:var(--navy); margin-bottom:6px;">${escapeHtml(team.name)}</h3>
+        <div class="score-input-row">
+          <span class="muted">Score:</span>
+          <input type="number" inputmode="numeric" min="0" id="score-${team.id}" value="${reportScores[team.id] != null ? reportScores[team.id] : ''}"
+            onchange="onScoreChange('${escapeJs(team.id)}')" />
+        </div>
+      </div>
+    `).join('');
+
+    // Goal slots for both teams stack full-width, one after another, below
+    // the (side-by-side) score inputs - not split into two columns.
+    const goalsContainer = document.getElementById('goalSlotsList');
+    goalsContainer.innerHTML = gameData.teams.map(team => `<div id="report-Goal-${team.id}"></div>`).join('');
+    gameData.teams.forEach(team => renderGoalSlots(team.id, team.name));
+  }
+
+  function onScoreChange(teamId) {
+    const team = gameData.teams.find(t => t.id === teamId);
+    renderGoalSlots(teamId, team.name);
+  }
+
+  function currentScoreValue(teamId) {
+    const el = document.getElementById('score-' + teamId);
+    const val = el ? el.value.trim() : '';
+    return val === '' ? null : parseInt(val, 10);
+  }
+
+  function goalCountForTeam(teamId) {
+    return reportEntries.filter(e => e.teamId === teamId && e.eventType === 'Goal').length;
+  }
+
+  function goalEntriesForTeam(teamId) {
+    return reportEntries.filter(e => e.teamId === teamId && e.eventType === 'Goal');
+  }
+
+  // Renders exactly `score` goal slots for this team - one row per goal in
+  // the score, pre-listed and waiting to be filled. Clicking an empty slot
+  // opens the picker for that specific goal; no separate "+ Add Goal"
+  // button exists since the score itself determines how many are needed.
+  // (Goal slots already know their team - no team-choice step needed here.)
+  // Team name is embedded directly in each slot's label since the "Goals"
+  // header above is now shared across both teams, not repeated per column.
+  function renderGoalSlots(teamId, teamName) {
+    const el = document.getElementById('report-Goal-' + teamId);
+    if (!el) return;
+    const score = currentScoreValue(teamId);
+
+    if (score == null) {
+      el.innerHTML = '<div class="muted" style="font-size:12px;">Enter the score above to list goal slots.</div>';
+      return;
+    }
+    if (score === 0) {
+      el.innerHTML = '<div class="muted" style="font-size:12px;">No goals to record (score is 0).</div>';
+      return;
+    }
+
+    const goals = goalEntriesForTeam(teamId);
+    let html = '';
+    for (let i = 0; i < score; i++) {
+      const entry = goals[i];
+      if (entry) {
+        const idx = reportEntries.indexOf(entry);
+        html += `<div class="report-entry"><span>Goal ${i + 1} ${escapeHtml(teamName)}: ${escapeHtml(entry.name)}${entry.minute != null ? ' — min ' + entry.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
+      } else {
+        html += `<div class="option" style="margin-bottom:6px; text-align:center; color:var(--gray);" onclick="openGoalPicker('${escapeJs(teamId)}', '${escapeJs(teamName)}')">Goal ${i + 1} ${escapeHtml(teamName)}: Select player</div>`;
+      }
+    }
+    el.innerHTML = html;
+  }
+
+  // Yellow/Red Card lists are unified across both teams (not split per
+  // team) - each entry shows which team it belongs to.
+  function renderUnifiedReportList(eventType) {
+    const el = document.getElementById('report-' + eventType);
+    if (!el) return;
+    const items = reportEntries.filter(e => e.eventType === eventType);
+    el.innerHTML = items.length
+      ? items.map(e => {
+          const idx = reportEntries.indexOf(e);
+          return `<div class="report-entry"><span><strong>${escapeHtml(e.teamName)}:</strong> ${escapeHtml(e.name)}${e.reason ? ' — ' + escapeHtml(e.reason) : ''}${e.minute != null ? ' — min ' + e.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
+        }).join('')
+      : '<div class="muted" style="font-size:12px;">None added yet.</div>';
+  }
+
+  function removeReportEntry(idx) {
+    const entry = reportEntries[idx];
+    reportEntries.splice(idx, 1);
+    if (entry.eventType === 'Goal') {
+      renderGoalSlots(entry.teamId, entry.teamName);
+    } else {
+      renderUnifiedReportList(entry.eventType);
+    }
+  }
+
+  // Goal slots already know their team - straight to the person list.
+  function openGoalPicker(teamId, teamName) {
+    activeReportPicker = { teamId, teamName, eventType: 'Goal', pendingPerson: null, needsTeamChoice: false };
+    document.getElementById('reportPickerTitle').textContent = teamName + ' — Goal';
+    renderReportPickerPersonList();
+    document.getElementById('reportPickerOverlay').style.display = 'flex';
+  }
+
+  // Yellow/Red Card sections are unified across both teams, so the picker's
+  // first step here is choosing which team the card belongs to.
+  function openMisconductPicker(eventType) {
+    activeReportPicker = { teamId: null, teamName: null, eventType, pendingPerson: null, needsTeamChoice: true };
+    document.getElementById('reportPickerTitle').textContent = 'Select Team — ' + eventType;
+    renderTeamChoiceForPicker();
+    document.getElementById('reportPickerOverlay').style.display = 'flex';
+  }
+
+  function renderTeamChoiceForPicker() {
+    const listEl = document.getElementById('reportPickerList');
+    listEl.innerHTML = gameData.teams.map(team => `
+      <div class="option" onclick="chooseTeamForPicker('${escapeJs(team.id)}', '${escapeJs(team.name)}')">
+        <div style="font-weight:700; color:var(--navy);">${escapeHtml(team.name)}</div>
+      </div>
+    `).join('');
+  }
+
+  function chooseTeamForPicker(teamId, teamName) {
+    activeReportPicker.teamId = teamId;
+    activeReportPicker.teamName = teamName;
+    document.getElementById('reportPickerTitle').textContent = teamName + ' — ' + activeReportPicker.eventType;
+    renderReportPickerPersonList();
+  }
+
+  function closeReportPicker() {
+    document.getElementById('reportPickerOverlay').style.display = 'none';
+    activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null, needsTeamChoice: false };
+  }
+
+  // Only people actually checked in for this team appear here — pulled from
+  // checkinState, not the full SportsEngine roster.
+  function renderReportPickerPersonList() {
+    const { teamId, needsTeamChoice } = activeReportPicker;
+    const listEl = document.getElementById('reportPickerList');
+    const people = Object.entries(checkinState)
+      .filter(([key]) => key.startsWith(teamId + ':'))
+      .map(([key, val]) => ({ profileId: key.split(':')[1], ...val }));
+
+    const backLink = needsTeamChoice
+      ? `<a href="#" onclick="renderTeamChoiceForPicker(); return false;" class="back-link">← Back to team</a>`
+      : '';
+
+    if (!people.length) {
+      listEl.innerHTML = backLink + '<p class="muted">No one checked in for this team yet — go to Check In first.</p>';
+      return;
+    }
+
+    listEl.innerHTML = backLink + people.map(p => `
+      <div class="option" onclick="pickReportPerson('${escapeJs(p.profileId)}')">
+        <div style="font-weight:600;">${escapeHtml(p.name)}${p.personType === 'staff' ? ' <span class="pill" style="background:#F1EAD9; color:#7A5B12; padding:2px 8px; border-radius:10px; font-size:10.5px; font-weight:700;">STAFF</span>' : ''}</div>
+        ${p.jerseyNumber ? `<div class="muted" style="font-size:12px;">#${escapeHtml(p.jerseyNumber)}</div>` : ''}
+      </div>
+    `).join('');
+  }
+
+  function pickReportPerson(profileId) {
+    const key = activeReportPicker.teamId + ':' + profileId;
+    const person = checkinState[key];
+    if (!person) return;
+    activeReportPicker.pendingPerson = { profileId, name: person.name, personType: person.personType };
+    renderMinutePicker();
+  }
+
+  function renderMinutePicker() {
+    const listEl = document.getElementById('reportPickerList');
+    const { eventType, pendingPerson } = activeReportPicker;
+    const needsReason = eventType === 'Yellow Card' || eventType === 'Red Card';
+    const reasons = eventType === 'Yellow Card' ? YELLOW_CARD_REASONS : RED_CARD_REASONS;
+
+    const reasonHtml = needsReason ? `
+      <div class="section-label" style="margin-top:0;">Reason</div>
+      <select id="reasonSelect" style="width:100%; padding:12px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px; min-height:46px; font-size:16px;">
+        <option value="">-- Select Reason --</option>
+        ${reasons.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('')}
+      </select>
+    ` : '';
+
+    listEl.innerHTML = `
+      <a href="#" onclick="renderReportPickerPersonList(); return false;" class="back-link">← Back to list</a>
+      <p class="muted" style="margin-bottom:10px;"><strong>${escapeHtml(pendingPerson.name)}</strong></p>
+      ${reasonHtml}
+      <input type="number" inputmode="numeric" min="0" id="minuteInput" placeholder="Minute" style="width:100%; padding:12px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px; min-height:46px; font-size:16px;" />
+      <button style="width:100%;" onclick="confirmReportEntry()">Add</button>
+    `;
+  }
+
+  function confirmReportEntry() {
+    const { teamId, teamName, eventType, pendingPerson } = activeReportPicker;
+    const needsReason = eventType === 'Yellow Card' || eventType === 'Red Card';
+
+    let reason = null;
+    if (needsReason) {
+      reason = document.getElementById('reasonSelect').value;
+      if (!reason) {
+        alert('Select a reason before adding.');
+        return;
+      }
+    }
+
+    const minuteVal = document.getElementById('minuteInput').value.trim();
+    const minute = minuteVal === '' ? null : parseInt(minuteVal, 10);
+
+    reportEntries.push({
+      teamId, teamName, personType: pendingPerson.personType, profileId: pendingPerson.profileId,
+      name: pendingPerson.name, eventType, minute, reason,
+    });
+
+    // Auto-add a Red Card if this is this player's 2nd Yellow Card in the
+    // game - same minute as the 2nd yellow, reason "2nd Caution".
+    if (eventType === 'Yellow Card') {
+      const yellowsForThisPlayer = reportEntries.filter(e =>
+        e.eventType === 'Yellow Card' && e.profileId === pendingPerson.profileId && e.teamId === teamId
+      );
+      if (yellowsForThisPlayer.length === 2) {
+        reportEntries.push({
+          teamId, teamName, personType: pendingPerson.personType, profileId: pendingPerson.profileId,
+          name: pendingPerson.name, eventType: 'Red Card', minute, reason: '2nd Caution',
+        });
+        renderUnifiedReportList('Red Card');
+      }
+    }
+
+    if (eventType === 'Goal') {
+      renderGoalSlots(teamId, teamName);
+    } else {
+      renderUnifiedReportList(eventType);
+    }
+    closeReportPicker();
+  }
+
+  async function submitMatchReport() {
+    const resultEl = document.getElementById('reportSubmitResult');
+    resultEl.innerHTML = '';
+    const btn = document.getElementById('submitReportBtn');
+
+    const scores = {};
+    for (const team of gameData.teams) {
+      const val = document.getElementById('score-' + team.id).value.trim();
+      if (val === '') {
+        resultEl.innerHTML = '<div class="err">Enter a score for both teams.</div>';
+        return;
+      }
+      scores[team.id] = parseInt(val, 10);
+    }
+
+    // Goal count must exactly match the entered score for each team - forces
+    // a goal-scorer + minute to be recorded for every goal in the score.
+    for (const team of gameData.teams) {
+      const goalCount = goalCountForTeam(team.id);
+      const score = scores[team.id];
+      if (goalCount !== score) {
+        resultEl.innerHTML = `<div class="err">${escapeHtml(team.name)}: ${goalCount} of ${score} goal(s) recorded. ` +
+          (goalCount < score ? 'Add the missing goal scorer(s) before submitting.' : 'Remove the extra goal entry/entries before submitting.') + '</div>';
+        return;
+      }
+    }
+
+    // If neither team has any Yellow Card or Red Card entries at all,
+    // confirm this is intentional before submitting - a safety check
+    // against forgetting to log misconduct, not a hard block.
+    const anyMisconduct = reportEntries.some(e => e.eventType === 'Yellow Card' || e.eventType === 'Red Card');
+    if (!anyMisconduct) {
+      const confirmed = confirm('No yellow or red cards have been recorded for this match. Confirm there was no misconduct?');
+      if (!confirmed) return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Submitting...';
+
+    const payload = {
+      gameId,
+      team1: { id: gameData.teams[0].id, name: gameData.teams[0].name, score: scores[gameData.teams[0].id] },
+      team2: { id: gameData.teams[1].id, name: gameData.teams[1].name, score: scores[gameData.teams[1].id] },
+      entries: reportEntries,
+    };
+
+    try {
+      const res = await fetch('/api/match-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Unknown error');
+
+      if (json.scoreUpdated) {
+        resultEl.innerHTML = '<div style="color:var(--success); font-size:13px;">Match report saved, and the score was pushed to SportsEngine successfully.</div>';
+      } else {
+        resultEl.innerHTML = '<div class="err">Report saved, but pushing the score to SportsEngine failed: ' +
+          escapeHtml(json.scoreError || 'unknown error') + '. Your entries are safe — you can resubmit to retry the score push.</div>';
+      }
+    } catch (e) {
+      resultEl.innerHTML = '<div class="err">Submit failed: ' + escapeHtml(e.message) + '</div>';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Submit Match Report';
+    }
+  }
+
+  init();
+</script>
+</body>
+</html>
