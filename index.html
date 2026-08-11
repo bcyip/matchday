@@ -473,7 +473,8 @@
     }
     reportEntries = (data.entries || []).map(e => ({
       teamId: e.team_id, teamName: e.team_name, personType: e.person_type,
-      profileId: e.profile_id, name: e.name, eventType: e.event_type, minute: e.minute, reason: e.reason,
+      profileId: e.profile_id, name: e.name, eventType: e.event_type, minute: e.minute,
+      reason: e.reason, supplementalReport: e.supplemental_report,
     }));
   }
 
@@ -575,7 +576,7 @@
           const action = isAutoRed
             ? `<span class="muted" style="font-size:11px;">(auto)</span>`
             : `<button onclick="removeReportEntry(${idx})">✕</button>`;
-          return `<div class="report-entry"><span><strong>${escapeHtml(e.teamName)}:</strong> ${escapeHtml(e.name)}${e.reason ? ' — ' + escapeHtml(e.reason) : ''}${e.minute != null ? ' — min ' + e.minute : ''}</span>${action}</div>`;
+          return `<div class="report-entry"><span><strong>${escapeHtml(e.teamName)}:</strong> ${escapeHtml(e.name)}${e.reason ? ' — ' + escapeHtml(e.reason) : ''}${e.minute != null ? ' — min ' + e.minute : ''}${e.supplementalReport ? ' <span class="muted" style="font-size:11px;">📄 report on file</span>' : ''}</span>${action}</div>`;
         }).join('')
       : '<div class="muted" style="font-size:12px;">None added yet.</div>';
   }
@@ -710,23 +711,51 @@
     const listEl = document.getElementById('reportPickerList');
     const { eventType, pendingPerson } = activeReportPicker;
     const needsReason = eventType === 'Yellow Card' || eventType === 'Red Card';
+    const isRedCard = eventType === 'Red Card';
     const reasons = eventType === 'Yellow Card' ? YELLOW_CARD_REASONS : RED_CARD_REASONS;
 
     const reasonHtml = needsReason ? `
       <div class="section-label" style="margin-top:0;">Reason</div>
-      <select id="reasonSelect" style="width:100%; padding:12px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px; min-height:46px; font-size:16px;">
+      <select id="reasonSelect" ${isRedCard ? 'onchange="onRedCardReasonChange()"' : ''} style="width:100%; padding:12px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px; min-height:46px; font-size:16px;">
         <option value="">-- Select Reason --</option>
         ${reasons.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('')}
       </select>
     ` : '';
 
+    // Supplemental report is required for Red Cards, EXCEPT when the
+    // reason is "2nd Caution" - that section updates dynamically as the
+    // reason dropdown changes, since 2nd Caution is a selectable reason
+    // here regardless of whether it came from the auto-generation logic.
+    const supplementalHtml = isRedCard ? `<div id="supplementalReportSection" style="margin-bottom:10px;"></div>` : '';
+
     listEl.innerHTML = `
       <a href="#" onclick="renderReportPickerPersonList(); return false;" class="back-link">← Back to list</a>
       <p class="muted" style="margin-bottom:10px;"><strong>${escapeHtml(pendingPerson.name)}</strong></p>
       ${reasonHtml}
+      ${supplementalHtml}
       <input type="number" inputmode="numeric" min="0" id="minuteInput" placeholder="Minute" style="width:100%; padding:12px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px; min-height:46px; font-size:16px;" />
       <button style="width:100%;" onclick="confirmReportEntry()">Add</button>
     `;
+
+    if (isRedCard) onRedCardReasonChange();
+  }
+
+  function onRedCardReasonChange() {
+    const reasonEl = document.getElementById('reasonSelect');
+    const section = document.getElementById('supplementalReportSection');
+    if (!reasonEl || !section) return;
+    const reason = reasonEl.value;
+
+    if (reason === '2nd Caution') {
+      section.innerHTML = '<p class="muted" style="font-size:12px;">Supplemental report not necessary for 2nd Caution red cards.</p>';
+    } else if (reason) {
+      section.innerHTML = `
+        <div class="section-label" style="margin-top:0;">Supplemental Report</div>
+        <textarea id="supplementalReportInput" placeholder="Describe the incident..." style="width:100%; box-sizing:border-box; min-height:90px; padding:10px; border:1px solid var(--border); border-radius:8px; font-size:15px; font-family:inherit;"></textarea>
+      `;
+    } else {
+      section.innerHTML = '<p class="muted" style="font-size:12px;">Select a reason above.</p>';
+    }
   }
 
   function confirmReportEntry() {
@@ -742,16 +771,27 @@
       }
     }
 
+    let supplementalReport = null;
+    if (eventType === 'Red Card' && reason !== '2nd Caution') {
+      const textareaEl = document.getElementById('supplementalReportInput');
+      supplementalReport = textareaEl ? textareaEl.value.trim() : '';
+      if (!supplementalReport) {
+        alert('A supplemental report is required for this red card.');
+        return;
+      }
+    }
+
     const minuteVal = document.getElementById('minuteInput').value.trim();
     const minute = minuteVal === '' ? null : parseInt(minuteVal, 10);
 
     reportEntries.push({
       teamId, teamName, personType: pendingPerson.personType, profileId: pendingPerson.profileId,
-      name: pendingPerson.name, eventType, minute, reason,
+      name: pendingPerson.name, eventType, minute, reason, supplementalReport,
     });
 
     // Auto-add a Red Card if this is this player's 2nd Yellow Card in the
-    // game - same minute as the 2nd yellow, reason "2nd Caution".
+    // game - same minute as the 2nd yellow, reason "2nd Caution", no
+    // supplemental report needed.
     if (eventType === 'Yellow Card') {
       const yellowsForThisPlayer = reportEntries.filter(e =>
         e.eventType === 'Yellow Card' && e.profileId === pendingPerson.profileId && e.teamId === teamId
@@ -759,7 +799,7 @@
       if (yellowsForThisPlayer.length === 2) {
         reportEntries.push({
           teamId, teamName, personType: pendingPerson.personType, profileId: pendingPerson.profileId,
-          name: pendingPerson.name, eventType: 'Red Card', minute, reason: '2nd Caution',
+          name: pendingPerson.name, eventType: 'Red Card', minute, reason: '2nd Caution', supplementalReport: null,
         });
         renderUnifiedReportList('Red Card');
       }

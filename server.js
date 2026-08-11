@@ -386,7 +386,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const scoresResult = await pool.query('SELECT * FROM match_report_scores WHERE game_id = $1', [gameId]);
       const entriesResult = await pool.query(
-        'SELECT team_id, team_name, person_type, profile_id, name, event_type, minute, reason FROM match_report_entries WHERE game_id = $1 ORDER BY minute NULLS LAST',
+        'SELECT team_id, team_name, person_type, profile_id, name, event_type, minute, reason, supplemental_report FROM match_report_entries WHERE game_id = $1 ORDER BY minute NULLS LAST',
         [gameId]
       );
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -446,6 +446,10 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: 'Red Card entries require a valid reason.' }));
         }
+        if (e.eventType === 'Red Card' && e.reason !== '2nd Caution' && (!e.supplementalReport || !String(e.supplementalReport).trim())) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'A supplemental report is required for this red card (not needed for 2nd Caution).' }));
+        }
       }
 
       // --- Save to Postgres first (our own data, fully under our control).
@@ -470,9 +474,9 @@ const server = http.createServer(async (req, res) => {
         await client.query('DELETE FROM match_report_entries WHERE game_id = $1', [gameId]);
         for (const e of entries) {
           await client.query(
-            `INSERT INTO match_report_entries (game_id, team_id, team_name, person_type, profile_id, name, event_type, minute, reason, submitted_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
-            [gameId, e.teamId, e.teamName, e.personType, e.profileId, e.name, e.eventType, e.minute ?? null, e.reason ?? null]
+            `INSERT INTO match_report_entries (game_id, team_id, team_name, person_type, profile_id, name, event_type, minute, reason, supplemental_report, submitted_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())`,
+            [gameId, e.teamId, e.teamName, e.personType, e.profileId, e.name, e.eventType, e.minute ?? null, e.reason ?? null, e.supplementalReport ?? null]
           );
         }
 
