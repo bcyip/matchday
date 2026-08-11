@@ -172,48 +172,8 @@
       config = configRes;
       gameData = gameRes;
 
-      // ===== TEMPORARY TEST DATA — REMOVE BEFORE PRODUCTION =====
-      // Injects 20 fake players into Temple's roster to preview how the UI
-      // handles a large roster. Runs AFTER the real fetch completes and only
-      // mutates the in-browser copy of gameData - does not touch the actual
-      // /api/game query or SportsEngine data in any way.
-      (function injectTestRoster() {
-        const temple = gameData.teams.find(t => t.name && t.name.toLowerCase().includes('temple'));
-        if (!temple) return;
-        const fakePlayers = [];
-        for (let i = 1; i <= 20; i++) {
-          fakePlayers.push({
-            firstName: 'Test', lastName: 'Player' + i,
-            jerseyNumber: String(i), profileId: 'TEST-TEMPLE-' + i, rosterStatus: 'active',
-          });
-        }
-        temple.players = fakePlayers;
-        console.log('[TEST DATA] Injected 20 fake players into Temple roster for UI testing only.');
-      })();
-      // ===== END TEMPORARY TEST DATA =====
-
       await loadCheckinState();
       await loadMatchReportState();
-
-      // ===== TEMPORARY TEST DATA (part 2) — REMOVE BEFORE PRODUCTION =====
-      // Marks the 20 fake Temple players as already checked-in, client-side
-      // only, so the Goal/YC/RC picker can be validated with a full roster
-      // without manually checking each one in via the UI. Placed AFTER
-      // loadCheckinState() so it adds to (not gets overwritten by) the real
-      // check-in data from Postgres. Never written to the database.
-      (function injectTestCheckins() {
-        const temple = gameData.teams.find(t => t.name && t.name.toLowerCase().includes('temple'));
-        if (!temple) return;
-        temple.players.forEach(p => {
-          if (String(p.profileId).startsWith('TEST-TEMPLE-')) {
-            checkinState[temple.id + ':' + p.profileId] = {
-              jerseyNumber: p.jerseyNumber, personType: 'player', name: (p.firstName + ' ' + p.lastName).trim(),
-            };
-          }
-        });
-        console.log('[TEST DATA] Marked 20 fake Temple players as checked-in (client-side only) for picker UI validation.');
-      })();
-      // ===== END TEMPORARY TEST DATA (part 2) =====
 
       document.getElementById('loadingState').style.display = 'none';
       document.getElementById('landingView').style.display = 'block';
