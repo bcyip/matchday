@@ -540,11 +540,11 @@
     const score = currentScoreValue(teamId);
 
     if (score == null) {
-      el.innerHTML = '<div class="muted" style="font-size:12px;">Enter the score above to list goal slots.</div>';
+      el.innerHTML = `<div class="muted" style="font-size:12px;">Enter ${escapeHtml(teamName)}'s score above to list their goal slots.</div>`;
       return;
     }
     if (score === 0) {
-      el.innerHTML = '<div class="muted" style="font-size:12px;">No goals to record (score is 0).</div>';
+      el.innerHTML = `<div class="muted" style="font-size:12px;">No goals to record for ${escapeHtml(teamName)} (score is 0).</div>`;
       return;
     }
 
