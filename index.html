@@ -172,6 +172,26 @@
       config = configRes;
       gameData = gameRes;
 
+      // ===== TEMPORARY TEST DATA — REMOVE BEFORE PRODUCTION =====
+      // Injects 20 fake players into Temple's roster to preview how the UI
+      // handles a large roster. Runs AFTER the real fetch completes and only
+      // mutates the in-browser copy of gameData - does not touch the actual
+      // /api/game query or SportsEngine data in any way.
+      (function injectTestRoster() {
+        const temple = gameData.teams.find(t => t.name && t.name.toLowerCase().includes('temple'));
+        if (!temple) return;
+        const fakePlayers = [];
+        for (let i = 1; i <= 20; i++) {
+          fakePlayers.push({
+            firstName: 'Test', lastName: 'Player' + i,
+            jerseyNumber: String(i), profileId: 'TEST-TEMPLE-' + i, rosterStatus: 'active',
+          });
+        }
+        temple.players = fakePlayers;
+        console.log('[TEST DATA] Injected 20 fake players into Temple roster for UI testing only.');
+      })();
+      // ===== END TEMPORARY TEST DATA =====
+
       await loadCheckinState();
       await loadMatchReportState();
 
