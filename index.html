@@ -195,6 +195,26 @@
       await loadCheckinState();
       await loadMatchReportState();
 
+      // ===== TEMPORARY TEST DATA (part 2) — REMOVE BEFORE PRODUCTION =====
+      // Marks the 20 fake Temple players as already checked-in, client-side
+      // only, so the Goal/YC/RC picker can be validated with a full roster
+      // without manually checking each one in via the UI. Placed AFTER
+      // loadCheckinState() so it adds to (not gets overwritten by) the real
+      // check-in data from Postgres. Never written to the database.
+      (function injectTestCheckins() {
+        const temple = gameData.teams.find(t => t.name && t.name.toLowerCase().includes('temple'));
+        if (!temple) return;
+        temple.players.forEach(p => {
+          if (String(p.profileId).startsWith('TEST-TEMPLE-')) {
+            checkinState[temple.id + ':' + p.profileId] = {
+              jerseyNumber: p.jerseyNumber, personType: 'player', name: (p.firstName + ' ' + p.lastName).trim(),
+            };
+          }
+        });
+        console.log('[TEST DATA] Marked 20 fake Temple players as checked-in (client-side only) for picker UI validation.');
+      })();
+      // ===== END TEMPORARY TEST DATA (part 2) =====
+
       document.getElementById('loadingState').style.display = 'none';
       document.getElementById('landingView').style.display = 'block';
 
