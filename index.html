@@ -457,7 +457,7 @@
   // ---------- Match Report ----------
 
   const YELLOW_CARD_REASONS = ['Unsporting Behavior', 'Delaying the Restart', 'Failure to Respect Distance', 'Persistent Offense', 'Dissent', 'Entering/Leaving Field of Play', "Excessively using the 'review' signal"];
-  const RED_CARD_REASONS = ['2nd Caution', 'Serious Foul Play', 'DOGSO-F', 'DOGSO-H', 'Violent Conduct', 'Abusive Language', 'Biting or Spitting'];
+  const RED_CARD_REASONS = ['Serious Foul Play', 'DOGSO-F', 'DOGSO-H', 'Violent Conduct', 'Abusive Language', 'Biting or Spitting']; // "2nd Caution" intentionally excluded - only ever set by the auto-generation logic, never manually selectable
 
   let reportScores = {}; // teamId -> score
   let reportEntries = []; // {teamId, teamName, personType, profileId, name, eventType, minute, reason}
@@ -722,18 +722,17 @@
       </select>
     ` : '';
 
-    // Supplemental report is required for Red Cards, EXCEPT when the
-    // reason is "2nd Caution" - that section updates dynamically as the
-    // reason dropdown changes, since 2nd Caution is a selectable reason
-    // here regardless of whether it came from the auto-generation logic.
+    // Supplemental report is required for every manually-selected Red Card
+    // reason (2nd Caution isn't a selectable option here at all - it's only
+    // ever set by the auto-generation logic, which never needs a report).
     const supplementalHtml = isRedCard ? `<div id="supplementalReportSection" style="margin-bottom:10px;"></div>` : '';
 
     listEl.innerHTML = `
       <a href="#" onclick="renderReportPickerPersonList(); return false;" class="back-link">← Back to list</a>
       <p class="muted" style="margin-bottom:10px;"><strong>${escapeHtml(pendingPerson.name)}</strong></p>
       ${reasonHtml}
-      ${supplementalHtml}
       <input type="number" inputmode="numeric" min="0" id="minuteInput" placeholder="Minute" style="width:100%; padding:12px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px; min-height:46px; font-size:16px;" />
+      ${supplementalHtml}
       <button style="width:100%;" onclick="confirmReportEntry()">Add</button>
     `;
 
@@ -746,9 +745,7 @@
     if (!reasonEl || !section) return;
     const reason = reasonEl.value;
 
-    if (reason === '2nd Caution') {
-      section.innerHTML = '<p class="muted" style="font-size:12px;">Supplemental report not necessary for 2nd Caution red cards.</p>';
-    } else if (reason) {
+    if (reason) {
       section.innerHTML = `
         <div class="section-label" style="margin-top:0;">Supplemental Report</div>
         <textarea id="supplementalReportInput" placeholder="Describe the incident..." style="width:100%; box-sizing:border-box; min-height:90px; padding:10px; border:1px solid var(--border); border-radius:8px; font-size:15px; font-family:inherit;"></textarea>
