@@ -456,8 +456,11 @@
 
   // ---------- Match Report ----------
 
+  const YELLOW_CARD_REASONS = ['Unsporting Behavior', 'Delaying the Restart', 'Failure to Respect Distance', 'Persistent Offense', 'Dissent', 'Entering/Leaving Field of Play', "Excessively using the 'review' signal"];
+  const RED_CARD_REASONS = ['2nd Caution', 'Serious Foul Play', 'DOGSO-F', 'DOGSO-H', 'Violent Conduct', 'Abusive Language', 'Biting or Spitting'];
+
   let reportScores = {}; // teamId -> score
-  let reportEntries = []; // {teamId, teamName, personType, profileId, name, eventType, minute}
+  let reportEntries = []; // {teamId, teamName, personType, profileId, name, eventType, minute, reason}
   let activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null, needsTeamChoice: false };
 
   async function loadMatchReportState() {
@@ -470,7 +473,7 @@
     }
     reportEntries = (data.entries || []).map(e => ({
       teamId: e.team_id, teamName: e.team_name, personType: e.person_type,
-      profileId: e.profile_id, name: e.name, eventType: e.event_type, minute: e.minute,
+      profileId: e.profile_id, name: e.name, eventType: e.event_type, minute: e.minute, reason: e.reason,
     }));
   }
 
@@ -568,18 +571,52 @@
     el.innerHTML = items.length
       ? items.map(e => {
           const idx = reportEntries.indexOf(e);
-          return `<div class="report-entry"><span><strong>${escapeHtml(e.teamName)}:</strong> ${escapeHtml(e.name)}${e.minute != null ? ' — min ' + e.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
+          const isAutoRed = e.eventType === 'Red Card' && e.reason === '2nd Caution';
+          const action = isAutoRed
+            ? `<span class="muted" style="font-size:11px;">(auto)</span>`
+            : `<button onclick="removeReportEntry(${idx})">✕</button>`;
+          return `<div class="report-entry"><span><strong>${escapeHtml(e.teamName)}:</strong> ${escapeHtml(e.name)}${e.reason ? ' — ' + escapeHtml(e.reason) : ''}${e.minute != null ? ' — min ' + e.minute : ''}</span>${action}</div>`;
         }).join('')
       : '<div class="muted" style="font-size:12px;">None added yet.</div>';
   }
 
   function removeReportEntry(idx) {
     const entry = reportEntries[idx];
+
+    // Auto-generated 2nd-Caution red cards have no remove button in the UI
+    // (see renderUnifiedReportList), but guard here too in case this is
+    // ever reached some other way - only removable via its triggering
+    // Yellow Card, never directly.
+    if (entry.eventType === 'Red Card' && entry.reason === '2nd Caution') {
+      alert("This red card was automatically added for a 2nd Yellow Card. Remove one of this player's Yellow Cards instead.");
+      return;
+    }
+
     reportEntries.splice(idx, 1);
+
     if (entry.eventType === 'Goal') {
       renderGoalSlots(entry.teamId, entry.teamName);
-    } else {
-      renderUnifiedReportList(entry.eventType);
+      return;
+    }
+
+    renderUnifiedReportList(entry.eventType);
+
+    // If removing this Yellow Card drops the player below 2 total, the
+    // auto-generated 2nd Caution red card (if any) is no longer valid -
+    // remove it too.
+    if (entry.eventType === 'Yellow Card') {
+      const remainingYellows = reportEntries.filter(e =>
+        e.eventType === 'Yellow Card' && e.profileId === entry.profileId && e.teamId === entry.teamId
+      ).length;
+      if (remainingYellows < 2) {
+        const autoRedIdx = reportEntries.findIndex(e =>
+          e.eventType === 'Red Card' && e.reason === '2nd Caution' && e.profileId === entry.profileId && e.teamId === entry.teamId
+        );
+        if (autoRedIdx !== -1) {
+          reportEntries.splice(autoRedIdx, 1);
+          renderUnifiedReportList('Red Card');
+        }
+      }
     }
   }
 
@@ -657,22 +694,63 @@
 
   function renderMinutePicker() {
     const listEl = document.getElementById('reportPickerList');
+    const { eventType, pendingPerson } = activeReportPicker;
+    const needsReason = eventType === 'Yellow Card' || eventType === 'Red Card';
+    const reasons = eventType === 'Yellow Card' ? YELLOW_CARD_REASONS : RED_CARD_REASONS;
+
+    const reasonHtml = needsReason ? `
+      <div class="section-label" style="margin-top:0;">Reason</div>
+      <select id="reasonSelect" style="width:100%; padding:12px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px; min-height:46px; font-size:16px;">
+        <option value="">-- Select Reason --</option>
+        ${reasons.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('')}
+      </select>
+    ` : '';
+
     listEl.innerHTML = `
       <a href="#" onclick="renderReportPickerPersonList(); return false;" class="back-link">← Back to list</a>
-      <p class="muted" style="margin-bottom:10px;"><strong>${escapeHtml(activeReportPicker.pendingPerson.name)}</strong> — enter minute (optional)</p>
+      <p class="muted" style="margin-bottom:10px;"><strong>${escapeHtml(pendingPerson.name)}</strong></p>
+      ${reasonHtml}
       <input type="number" inputmode="numeric" min="0" id="minuteInput" placeholder="Minute" style="width:100%; padding:12px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px; min-height:46px; font-size:16px;" />
       <button style="width:100%;" onclick="confirmReportEntry()">Add</button>
     `;
   }
 
   function confirmReportEntry() {
+    const { teamId, teamName, eventType, pendingPerson } = activeReportPicker;
+    const needsReason = eventType === 'Yellow Card' || eventType === 'Red Card';
+
+    let reason = null;
+    if (needsReason) {
+      reason = document.getElementById('reasonSelect').value;
+      if (!reason) {
+        alert('Select a reason before adding.');
+        return;
+      }
+    }
+
     const minuteVal = document.getElementById('minuteInput').value.trim();
     const minute = minuteVal === '' ? null : parseInt(minuteVal, 10);
-    const { teamId, teamName, eventType, pendingPerson } = activeReportPicker;
+
     reportEntries.push({
       teamId, teamName, personType: pendingPerson.personType, profileId: pendingPerson.profileId,
-      name: pendingPerson.name, eventType, minute,
+      name: pendingPerson.name, eventType, minute, reason,
     });
+
+    // Auto-add a Red Card if this is this player's 2nd Yellow Card in the
+    // game - same minute as the 2nd yellow, reason "2nd Caution".
+    if (eventType === 'Yellow Card') {
+      const yellowsForThisPlayer = reportEntries.filter(e =>
+        e.eventType === 'Yellow Card' && e.profileId === pendingPerson.profileId && e.teamId === teamId
+      );
+      if (yellowsForThisPlayer.length === 2) {
+        reportEntries.push({
+          teamId, teamName, personType: pendingPerson.personType, profileId: pendingPerson.profileId,
+          name: pendingPerson.name, eventType: 'Red Card', minute, reason: '2nd Caution',
+        });
+        renderUnifiedReportList('Red Card');
+      }
+    }
+
     if (eventType === 'Goal') {
       renderGoalSlots(teamId, teamName);
     } else {
