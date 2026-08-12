@@ -851,6 +851,7 @@
 
     const payload = {
       gameId,
+      gameDate: gameData.event.start || null,
       team1: { id: gameData.teams[0].id, name: gameData.teams[0].name, score: scores[gameData.teams[0].id] },
       team2: { id: gameData.teams[1].id, name: gameData.teams[1].name, score: scores[gameData.teams[1].id] },
       entries: reportEntries,

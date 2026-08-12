@@ -413,7 +413,7 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ error: 'Invalid JSON body' }));
       }
 
-      const { gameId, team1, team2, entries } = payload;
+      const { gameId, gameDate, team1, team2, entries } = payload;
 
       // --- Validation ---
       if (!gameId || !team1 || !team2 || !Array.isArray(entries)) {
@@ -462,13 +462,14 @@ const server = http.createServer(async (req, res) => {
         await client.query('BEGIN');
 
         await client.query(
-          `INSERT INTO match_report_scores (game_id, team1_id, team1_name, team1_score, team2_id, team2_name, team2_score, submitted_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+          `INSERT INTO match_report_scores (game_id, game_date, team1_id, team1_name, team1_score, team2_id, team2_name, team2_score, submitted_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
            ON CONFLICT (game_id) DO UPDATE SET
+             game_date = EXCLUDED.game_date,
              team1_id = EXCLUDED.team1_id, team1_name = EXCLUDED.team1_name, team1_score = EXCLUDED.team1_score,
              team2_id = EXCLUDED.team2_id, team2_name = EXCLUDED.team2_name, team2_score = EXCLUDED.team2_score,
              submitted_at = now()`,
-          [gameId, team1.id, team1.name, team1.score, team2.id, team2.name, team2.score]
+          [gameId, gameDate || null, team1.id, team1.name, team1.score, team2.id, team2.name, team2.score]
         );
 
         await client.query('DELETE FROM match_report_entries WHERE game_id = $1', [gameId]);
