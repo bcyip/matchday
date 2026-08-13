@@ -30,6 +30,20 @@ const SE_ORG_ID = process.env.SE_ORG_ID;
 const GRAPHQL_ENDPOINT = 'https://api.sportsengine.com/graphql';
 
 const MAX_PLAYERS_CHECKIN = parseInt(process.env.MAX_PLAYERS_CHECKIN || '18', 10);
+
+// Standard suspension length by Red Card reason - used to auto-create a
+// suspension the moment a match report is submitted (before any admin
+// console review happens). The committee can later adjust up or down from
+// this baseline, but this is always the starting point.
+const STANDARD_SUSPENSION_GAMES = {
+  'Serious Foul Play': 1,
+  'DOGSO-F': 1,
+  'DOGSO-H': 1,
+  '2nd Caution': 1,
+  'Violent Conduct': 3,
+  'Abusive Language': 3,
+  'Biting or Spitting': 3,
+};
 const MAX_STAFF_CHECKIN = parseInt(process.env.MAX_STAFF_CHECKIN || '5', 10);
 
 // ---------- Postgres ----------
@@ -453,32 +467,60 @@ const server = http.createServer(async (req, res) => {
       }
 
       // --- Save to Postgres first (our own data, fully under our control).
-      // Scores are upserted (a resubmission corrects the prior one); entries
-      // are fully replaced for this game (the submission is the authoritative
-      // complete set, not an incremental add). ---
+      // Match reports can NEVER be resubmitted once saved - this is
+      // deliberate: suspensions are auto-created below at submission time
+      // and referenced by entry_id, which must stay permanently stable.
+      // Allowing a delete-and-replace resubmission (like earlier versions
+      // of this endpoint did) would risk orphaning or duplicating real
+      // suspension records tied to a specific incident. ---
       const client = await pool.connect();
       let postgresSaved = false;
       try {
         await client.query('BEGIN');
 
+        // Lock on this specific game so two near-simultaneous submission
+        // attempts can't both pass the "not yet submitted" check before
+        // either has committed.
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['match-report-submit:' + gameId]);
+
+        const existing = await client.query('SELECT 1 FROM match_report_scores WHERE game_id = $1', [gameId]);
+        if (existing.rowCount > 0) {
+          await client.query('ROLLBACK');
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'This match report has already been submitted and cannot be resubmitted.' }));
+        }
+
         await client.query(
           `INSERT INTO match_report_scores (game_id, game_date, team1_id, team1_name, team1_score, team2_id, team2_name, team2_score, submitted_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
-           ON CONFLICT (game_id) DO UPDATE SET
-             game_date = EXCLUDED.game_date,
-             team1_id = EXCLUDED.team1_id, team1_name = EXCLUDED.team1_name, team1_score = EXCLUDED.team1_score,
-             team2_id = EXCLUDED.team2_id, team2_name = EXCLUDED.team2_name, team2_score = EXCLUDED.team2_score,
-             submitted_at = now()`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
           [gameId, gameDate || null, team1.id, team1.name, team1.score, team2.id, team2.name, team2.score]
         );
 
-        await client.query('DELETE FROM match_report_entries WHERE game_id = $1', [gameId]);
         for (const e of entries) {
-          await client.query(
+          const insertResult = await client.query(
             `INSERT INTO match_report_entries (game_id, team_id, team_name, person_type, profile_id, name, event_type, minute, reason, supplemental_report, submitted_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+             RETURNING id`,
             [gameId, e.teamId, e.teamName, e.personType, e.profileId, e.name, e.eventType, e.minute ?? null, e.reason ?? null, e.supplementalReport ?? null]
           );
+          const entryId = insertResult.rows[0].id;
+
+          // Auto-create the suspension the moment a Red Card is submitted -
+          // never waits for an admin console review to exist first. Starts
+          // at the standard value for the reason; a committee can adjust it
+          // later, but the record always exists from submission onward.
+          if (e.eventType === 'Red Card') {
+            const standardGames = STANDARD_SUSPENSION_GAMES[e.reason];
+            if (standardGames != null) {
+              await client.query(
+                `INSERT INTO suspensions (entry_id, profile_id, team_id, team_name, player_name, games_suspended, standard_games, issued_from_game_date, status, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $6, $7, 'active', now())`,
+                [entryId, e.profileId, e.teamId, e.teamName, e.name, standardGames, gameDate || null]
+              );
+            } else {
+              console.warn('[match-report] No standard suspension mapping for reason:', e.reason, '- no suspension created for entry', entryId);
+            }
+          }
         }
 
         await client.query('COMMIT');
