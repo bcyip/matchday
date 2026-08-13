@@ -434,6 +434,15 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ error: 'Missing gameId, team1, team2, or entries.' }));
       }
+      // A Red Card always auto-creates a suspension, which requires a real
+      // game date (issued_from_game_date is NOT NULL). Rejecting outright
+      // here - rather than silently skipping suspension creation - is
+      // deliberate: a real Red Card that silently got no suspension due to
+      // a missing date would be a serious, easy-to-miss integrity gap.
+      if (entries.some(e => e.eventType === 'Red Card') && !gameDate) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'gameDate is required when submitting a Red Card, since it is needed to create the suspension record.' }));
+      }
       for (const t of [team1, team2]) {
         if (!t.id || !t.name || !Number.isInteger(t.score) || t.score < 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });

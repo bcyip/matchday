@@ -297,6 +297,7 @@ describe('Match Report: validation', () => {
     const gameId = randomId('test-game');
     const res = await apiPost('/api/match-report', {
       gameId,
+      gameDate: '2026-09-15T18:00:00Z',
       team1: { id: 'teamA', name: 'Team A', score: 0 },
       team2: { id: 'teamB', name: 'Team B', score: 0 },
       entries: [baseEntry({ eventType: 'Red Card', reason: 'Violent Conduct', supplementalReport: '' })],
@@ -308,6 +309,7 @@ describe('Match Report: validation', () => {
     const gameId = randomId('test-game');
     const res = await apiPost('/api/match-report', {
       gameId,
+      gameDate: '2026-09-15T18:00:00Z',
       team1: { id: 'teamA', name: 'Team A', score: 0 },
       team2: { id: 'teamB', name: 'Team B', score: 0 },
       entries: [baseEntry({ eventType: 'Red Card', reason: '2nd Caution', supplementalReport: null })],
