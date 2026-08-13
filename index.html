@@ -103,23 +103,29 @@
     <a href="#" class="back-link" onclick="showLanding(); return false;">← Back</a>
     <h2 style="margin-top:0; color:var(--navy);">Match Report</h2>
 
-    <div class="section-label" style="margin-top:0;">Goals</div>
-    <div class="team-columns" id="scoreGoalColumns" style="margin-bottom:14px;"></div>
-    <div id="goalSlotsList" style="margin-bottom:20px;"></div>
+    <!-- Shown once a report has already been submitted for this game -
+         match reports can never be resubmitted, so this is read-only. -->
+    <div id="reportLockedView" style="display:none;"></div>
 
-    <div class="report-section">
-      <h4>Yellow Cards</h4>
-      <div id="report-Yellow Card"></div>
-      <button class="secondary add-event-btn" onclick="openMisconductPicker('Yellow Card')">+ Add Yellow Card</button>
-    </div>
-    <div class="report-section">
-      <h4>Red Cards</h4>
-      <div id="report-Red Card"></div>
-      <button class="secondary add-event-btn" onclick="openMisconductPicker('Red Card')">+ Add Red Card</button>
-    </div>
+    <div id="reportEditableForm">
+      <div class="section-label" style="margin-top:0;">Goals</div>
+      <div class="team-columns" id="scoreGoalColumns" style="margin-bottom:14px;"></div>
+      <div id="goalSlotsList" style="margin-bottom:20px;"></div>
 
-    <button id="submitReportBtn" style="width:100%; margin-top:18px; padding:14px; font-size:15px;" onclick="submitMatchReport()">Submit Match Report</button>
-    <div id="reportSubmitResult" style="margin-top:10px;"></div>
+      <div class="report-section">
+        <h4>Yellow Cards</h4>
+        <div id="report-Yellow Card"></div>
+        <button class="secondary add-event-btn" onclick="openMisconductPicker('Yellow Card')">+ Add Yellow Card</button>
+      </div>
+      <div class="report-section">
+        <h4>Red Cards</h4>
+        <div id="report-Red Card"></div>
+        <button class="secondary add-event-btn" onclick="openMisconductPicker('Red Card')">+ Add Red Card</button>
+      </div>
+
+      <button id="submitReportBtn" style="width:100%; margin-top:18px; padding:14px; font-size:15px;" onclick="submitMatchReport()">Submit Match Report</button>
+      <div id="reportSubmitResult" style="margin-top:10px;"></div>
+    </div>
   </div>
 
   <!-- MATCH REPORT PLAYER PICKER MODAL -->
@@ -461,6 +467,7 @@
 
   let reportScores = {}; // teamId -> score
   let reportEntries = []; // {teamId, teamName, personType, profileId, name, eventType, minute, reason}
+  let reportAlreadySubmitted = false;
   let activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null, needsTeamChoice: false };
 
   async function loadMatchReportState() {
@@ -476,15 +483,62 @@
       profileId: e.profile_id, name: e.name, eventType: e.event_type, minute: e.minute,
       reason: e.reason, supplementalReport: e.supplemental_report,
     }));
+    // Match reports can never be resubmitted once saved - if scores already
+    // exist, this game's report is permanently locked to read-only.
+    reportAlreadySubmitted = !!data.scores;
   }
 
   function showMatchReport() {
     document.getElementById('landingView').style.display = 'none';
     document.getElementById('checkInView').style.display = 'none';
     document.getElementById('matchReportView').style.display = 'block';
+
+    if (reportAlreadySubmitted) {
+      document.getElementById('reportEditableForm').style.display = 'none';
+      document.getElementById('reportLockedView').style.display = 'block';
+      renderLockedReportView();
+      return;
+    }
+
+    document.getElementById('reportLockedView').style.display = 'none';
+    document.getElementById('reportEditableForm').style.display = 'block';
     renderScoreAndGoals();
     renderUnifiedReportList('Yellow Card');
     renderUnifiedReportList('Red Card');
+  }
+
+  function renderLockedReportView() {
+    const container = document.getElementById('reportLockedView');
+    const scoreLines = gameData.teams.map(team =>
+      `<div><strong>${escapeHtml(team.name)}</strong>: ${reportScores[team.id] != null ? reportScores[team.id] : '—'}</div>`
+    ).join('');
+
+    const entryLines = (eventType, emoji) => {
+      const items = reportEntries.filter(e => e.eventType === eventType);
+      if (!items.length) return '<div class="muted" style="font-size:13px;">None recorded.</div>';
+      return items.map(e =>
+        `<div class="report-entry"><span>${emoji} <strong>${escapeHtml(e.teamName)}:</strong> ${escapeHtml(e.name)}${e.reason ? ' — ' + escapeHtml(e.reason) : ''}${e.minute != null ? ' — min ' + e.minute : ''}</span></div>`
+      ).join('');
+    };
+
+    container.innerHTML = `
+      <div class="card" style="background:#F4F9FD; border-color:var(--blue); margin-bottom:16px;">
+        <strong>This match report has already been submitted and cannot be changed.</strong>
+        <p class="muted" style="margin:6px 0 0;">Match reports are locked after submission to keep suspension records accurate. Contact an administrator if a correction is genuinely needed.</p>
+      </div>
+
+      <div class="section-label" style="margin-top:0;">Final Score</div>
+      <div style="margin-bottom:16px;">${scoreLines}</div>
+
+      <div class="section-label">Goals</div>
+      <div style="margin-bottom:16px;">${entryLines('Goal', '⚽')}</div>
+
+      <div class="section-label">Yellow Cards</div>
+      <div style="margin-bottom:16px;">${entryLines('Yellow Card', '🟨')}</div>
+
+      <div class="section-label">Red Cards</div>
+      <div>${entryLines('Red Card', '🟥')}</div>
+    `;
   }
 
   // Top section: score input + goal slots together, for BOTH teams at once
