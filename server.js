@@ -364,7 +364,7 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ error: 'Invalid JSON body' }));
       }
 
-      const { gameId, teamId, teamName, personType, profileId, name, jerseyNumber, action } = payload;
+      const { gameId, gameDate, teamId, teamName, personType, profileId, name, jerseyNumber, action } = payload;
 
       if (!gameId || !teamId || !teamName || !personType || !profileId || !name || !action) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -377,6 +377,19 @@ const server = http.createServer(async (req, res) => {
       if (!['add', 'remove'].includes(action)) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ error: 'action must be "add" or "remove".' }));
+      }
+
+      // A suspended player/staff member cannot be checked in for this game.
+      // This is a real competitive-integrity rule (not just a cosmetic UI
+      // nicety), so it's enforced here server-side too, not just via the
+      // disabled input client-side. Only checked on 'add' - removing
+      // someone is always allowed.
+      if (action === 'add' && gameDate) {
+        const suspended = await getSuspendedPlayers(teamId, gameDate);
+        if (suspended.some((s) => s.profile_id === profileId)) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: name + ' is suspended and cannot be checked in for this game.' }));
+        }
       }
 
       const client = await pool.connect();

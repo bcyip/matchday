@@ -346,7 +346,7 @@
       const key = teamId + ':' + profileId;
       const isChecked = !!checkinState[key];
       const currentJersey = isChecked ? (checkinState[key].jerseyNumber || '') : '';
-      const disabledAttr = readOnly ? 'disabled' : '';
+      const disabledAttr = (readOnly || p.suspended) ? 'disabled' : '';
 
       const control = personType === 'player'
         ? `<input type="text" inputmode="numeric" maxlength="2" placeholder="#" value="${escapeHtml(currentJersey)}"
@@ -432,7 +432,7 @@
       const res = await fetch('/api/checkin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gameId, teamId, teamName, personType, profileId, name, jerseyNumber, action }),
+        body: JSON.stringify({ gameId, gameDate: gameData.event.start || null, teamId, teamName, personType, profileId, name, jerseyNumber, action }),
       });
       const json = await res.json();
       if (!res.ok) {
