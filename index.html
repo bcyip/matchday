@@ -344,7 +344,8 @@
         <div>
           <div class="roster-row ${readOnly ? 'readonly' : ''}">
             ${control}
-            <span class="rname">${escapeHtml(name)}</span>
+            <span class="rname" ${p.suspended ? 'style="text-decoration:line-through; color:var(--gray);"' : ''}>${escapeHtml(name)}</span>
+            ${p.suspended ? '<span class="muted" style="font-size:11px; color:var(--danger); font-weight:700;">SUSPENDED</span>' : ''}
           </div>
           <div class="row-error" id="err-${key}" style="display:none; color:var(--danger); font-size:11.5px; margin:-4px 0 4px;"></div>
         </div>`;

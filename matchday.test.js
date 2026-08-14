@@ -5,8 +5,14 @@
 // the same interface real users go through.
 //
 // Usage:
-//   TEST_BASE_URL=https://matchday.onrender.com node --test test/
-//   (defaults to http://localhost:8787 if TEST_BASE_URL isn't set)
+//   TEST_BASE_URL=https://matchday.onrender.com \
+//   TEST_DATABASE_URL="postgresql://..." \
+//   node --test test/
+//   (TEST_BASE_URL defaults to http://localhost:8787 if unset;
+//    TEST_DATABASE_URL is required for the "Suspension serving" tests,
+//    which need direct Postgres access to simulate admin-console
+//    adjustments - matchday itself has no endpoint for changing an
+//    existing suspension's games_suspended value)
 //
 // CI-readiness notes (see conversation for the full reasoning):
 //   - Uses `node --test`, which exits non-zero on any failure - this alone
@@ -20,11 +26,19 @@
 //     each test. (See the KNOWN LIMITATIONS note near the bottom of this
 //     file for what does NOT get cleaned up automatically yet.)
 
-const { test, describe } = require('node:test');
+const { test, describe, after } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('node:crypto');
+const { Pool } = require('pg');
 
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:8787';
+// Only used by the "Suspension serving" tests below, to directly adjust
+// games_suspended the way the admin console would (matchday itself has no
+// endpoint for this) and to clean up suspension rows afterward.
+const testPool = new Pool({
+  connectionString: process.env.TEST_DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
 function randomId(prefix) {
   return prefix + '-' + crypto.randomBytes(6).toString('hex');
@@ -383,6 +397,168 @@ describe('Match Report: submit and reload', () => {
     assert.strictEqual(getRes.body.entries[0].name, 'Scorer One');
     assert.strictEqual(getRes.body.scores.team1_score, 2, 'original score should remain unchanged');
   });
+});
+
+// ---------- Suspension serving ----------
+//
+// These tests use the REAL /api/match-report submission path to create
+// suspensions (exercising the actual auto-creation logic, not a simulation
+// of it), then read status back via the standalone GET
+// /api/suspended-players/:teamId endpoint - which exists specifically so
+// this logic is testable without needing a real SportsEngine roster fetch.
+// Direct Postgres access (testPool) is only used to simulate an admin
+// console adjustment (matchday itself has no endpoint for that) and to
+// clean up suspension rows afterward.
+
+describe('Suspension serving', () => {
+  test('a standard suspension is created automatically at the correct value when a Red Card is submitted', async () => {
+    const gameId = randomId('test-game');
+    const teamId = randomId('test-team');
+    const profileId = randomId('test-player');
+
+    const res = await apiPost('/api/match-report', {
+      gameId, gameDate: '2026-09-01T18:00:00Z',
+      team1: { id: teamId, name: 'Test Team', score: 0 },
+      team2: { id: 'opp-team', name: 'Opponent', score: 1 },
+      entries: [{
+        teamId, teamName: 'Test Team', personType: 'player', profileId, name: 'Test Player',
+        eventType: 'Red Card', reason: 'Violent Conduct', minute: 40, supplementalReport: 'Test incident.',
+      }],
+    });
+    assert.strictEqual(res.status, 200);
+
+    const susResult = await testPool.query('SELECT games_suspended, standard_games FROM suspensions WHERE profile_id = $1', [profileId]);
+    assert.strictEqual(susResult.rows.length, 1);
+    assert.strictEqual(susResult.rows[0].games_suspended, 3, 'Violent Conduct standard is 3');
+    assert.strictEqual(susResult.rows[0].standard_games, 3);
+
+    await testPool.query('DELETE FROM suspensions WHERE profile_id = $1', [profileId]);
+  });
+
+  test('player is suspended for the next game, then available once the standard number of games have been played', async () => {
+    const teamId = randomId('test-team');
+    const profileId = randomId('test-player');
+
+    // DOGSO-F = 1 game standard
+    await apiPost('/api/match-report', {
+      gameId: randomId('test-game'), gameDate: '2026-09-01T18:00:00Z',
+      team1: { id: teamId, name: 'Test Team', score: 0 },
+      team2: { id: 'opp-team', name: 'Opponent', score: 1 },
+      entries: [{
+        teamId, teamName: 'Test Team', personType: 'player', profileId, name: 'Test Player',
+        eventType: 'Red Card', reason: 'DOGSO-F', minute: 20, supplementalReport: 'x',
+      }],
+    });
+
+    const nextGameDate = '2026-09-08T18:00:00Z';
+    const beforeRes = await apiGet('/api/suspended-players/' + teamId + '?gameDate=' + encodeURIComponent(nextGameDate));
+    assert.ok(beforeRes.body.suspended.some(s => s.profile_id === profileId), 'should be suspended for the very next game (0 of 1 required games served)');
+
+    // That next game happens and gets reported (no misconduct in it)
+    await apiPost('/api/match-report', {
+      gameId: randomId('test-game'), gameDate: nextGameDate,
+      team1: { id: teamId, name: 'Test Team', score: 1 },
+      team2: { id: 'opp-team', name: 'Opponent', score: 0 },
+      entries: [],
+    });
+
+    const afterRes = await apiGet('/api/suspended-players/' + teamId + '?gameDate=2026-09-15T18:00:00Z');
+    assert.ok(!afterRes.body.suspended.some(s => s.profile_id === profileId), 'should be available - the required 1 game has now been served');
+
+    await testPool.query('DELETE FROM suspensions WHERE profile_id = $1', [profileId]);
+  });
+
+  test('an admin adjustment to 4 games is correctly respected - suspended through game 4, available for game 5', async () => {
+    const teamId = randomId('test-team');
+    const profileId = randomId('test-player');
+
+    // DOGSO-H standard is 1 game
+    await apiPost('/api/match-report', {
+      gameId: randomId('test-game'), gameDate: '2026-09-01T18:00:00Z',
+      team1: { id: teamId, name: 'Test Team', score: 0 },
+      team2: { id: 'opp-team', name: 'Opponent', score: 1 },
+      entries: [{
+        teamId, teamName: 'Test Team', personType: 'player', profileId, name: 'Test Player',
+        eventType: 'Red Card', reason: 'DOGSO-H', minute: 10, supplementalReport: 'x',
+      }],
+    });
+
+    // Simulate an admin console increase from standard 1 to 4
+    await testPool.query('UPDATE suspensions SET games_suspended = 4 WHERE profile_id = $1', [profileId]);
+
+    const gameDates = ['2026-09-08T18:00:00Z', '2026-09-15T18:00:00Z', '2026-09-22T18:00:00Z', '2026-09-29T18:00:00Z'];
+
+    // Check suspended status BEFORE each of the 4 games, submitting each as we go
+    for (let i = 0; i < gameDates.length; i++) {
+      const checkRes = await apiGet('/api/suspended-players/' + teamId + '?gameDate=' + encodeURIComponent(gameDates[i]));
+      assert.ok(checkRes.body.suspended.some(s => s.profile_id === profileId), `should still be suspended for game ${i + 1} of 4`);
+
+      await apiPost('/api/match-report', {
+        gameId: randomId('test-game'), gameDate: gameDates[i],
+        team1: { id: teamId, name: 'Test Team', score: 1 },
+        team2: { id: 'opp-team', name: 'Opponent', score: 0 },
+        entries: [],
+      });
+    }
+
+    // Now, after all 4 adjusted games have been served, the 5th should be available
+    const fifthGameRes = await apiGet('/api/suspended-players/' + teamId + '?gameDate=2026-10-06T18:00:00Z');
+    assert.ok(!fifthGameRes.body.suspended.some(s => s.profile_id === profileId), 'should be available for the 5th game - all 4 adjusted games served');
+
+    await testPool.query('DELETE FROM suspensions WHERE profile_id = $1', [profileId]);
+  });
+
+  test('reducing to 0 games makes the player immediately available', async () => {
+    const teamId = randomId('test-team');
+    const profileId = randomId('test-player');
+
+    await apiPost('/api/match-report', {
+      gameId: randomId('test-game'), gameDate: '2026-09-01T18:00:00Z',
+      team1: { id: teamId, name: 'Test Team', score: 0 },
+      team2: { id: 'opp-team', name: 'Opponent', score: 1 },
+      entries: [{
+        teamId, teamName: 'Test Team', personType: 'player', profileId, name: 'Test Player',
+        eventType: 'Red Card', reason: 'Serious Foul Play', minute: 15, supplementalReport: 'x',
+      }],
+    });
+
+    const checkDate = '2026-09-08T18:00:00Z';
+    const beforeRes = await apiGet('/api/suspended-players/' + teamId + '?gameDate=' + checkDate);
+    assert.ok(beforeRes.body.suspended.some(s => s.profile_id === profileId), 'should be suspended before the reduction');
+
+    // Simulate an admin console reduction to 0 (e.g. reversed on appeal)
+    await testPool.query('UPDATE suspensions SET games_suspended = 0 WHERE profile_id = $1', [profileId]);
+
+    const afterRes = await apiGet('/api/suspended-players/' + teamId + '?gameDate=' + checkDate);
+    assert.ok(!afterRes.body.suspended.some(s => s.profile_id === profileId), 'should be immediately available once reduced to 0');
+
+    await testPool.query('DELETE FROM suspensions WHERE profile_id = $1', [profileId]);
+  });
+
+  test('a suspension on one team does not affect a different team', async () => {
+    const teamA = randomId('test-team-a');
+    const teamB = randomId('test-team-b');
+    const profileIdA = randomId('test-player');
+
+    await apiPost('/api/match-report', {
+      gameId: randomId('test-game'), gameDate: '2026-09-01T18:00:00Z',
+      team1: { id: teamA, name: 'Team A', score: 0 },
+      team2: { id: teamB, name: 'Team B', score: 1 },
+      entries: [{
+        teamId: teamA, teamName: 'Team A', personType: 'player', profileId: profileIdA, name: 'Player A',
+        eventType: 'Red Card', reason: 'Biting or Spitting', minute: 60, supplementalReport: 'x',
+      }],
+    });
+
+    const teamBRes = await apiGet('/api/suspended-players/' + teamB + '?gameDate=2026-09-08T18:00:00Z');
+    assert.strictEqual(teamBRes.body.suspended.length, 0, 'Team B should have zero suspended players');
+
+    await testPool.query('DELETE FROM suspensions WHERE profile_id = $1', [profileIdA]);
+  });
+});
+
+after(async () => {
+  await testPool.end();
 });
 
 /*

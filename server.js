@@ -151,6 +151,41 @@ async function callGraphQL(query, variables) {
 
 // ---------- Dedicated endpoint: resolve a game deep-link + both rosters ----------
 
+/**
+ * Returns the set of profile_ids on a team who are STILL SERVING a
+ * suspension as of a given game date - i.e. the team hasn't yet played
+ * enough SUBMITTED games since the suspension's issued_from_game_date to
+ * cover games_suspended.
+ *
+ * "Games served" only counts the team's own submitted match reports with a
+ * game_date strictly AFTER the incident and strictly BEFORE the date being
+ * checked - this deliberately excludes the incident's own game (already
+ * guaranteed by the issued_from_game_date comparison) and excludes the game
+ * currently being checked into (so checking in for game N only counts games
+ * that already happened before N, never N itself).
+ *
+ * Exposed both internally (used by fetchGameWithRosters below) and via a
+ * dedicated GET /api/suspended-players/:teamId endpoint - the standalone
+ * endpoint exists specifically so this logic is testable on its own,
+ * without needing a real SportsEngine roster fetch in the test suite.
+ */
+async function getSuspendedPlayers(teamId, asOfGameDate) {
+  const result = await pool.query(
+    `SELECT s.profile_id, s.player_name, s.games_suspended, s.standard_games, s.issued_from_game_date,
+       (SELECT COUNT(*) FROM match_report_scores mrs
+        WHERE (mrs.team1_id = s.team_id OR mrs.team2_id = s.team_id)
+        AND mrs.game_date > s.issued_from_game_date
+        AND mrs.game_date < $2) AS games_served
+     FROM suspensions s
+     WHERE s.team_id = $1`,
+    [teamId, asOfGameDate]
+  );
+
+  return result.rows
+    .map((row) => ({ ...row, games_served: parseInt(row.games_served, 10) }))
+    .filter((row) => row.games_served < row.games_suspended);
+}
+
 async function fetchGameWithRosters(gameId) {
   const eventQuery = `
     query Event($id: String!) {
@@ -184,7 +219,19 @@ async function fetchGameWithRosters(gameId) {
   const teams = [];
   for (const teamId of teamIds) {
     const data = await callGraphQL(rosterQuery, { id: teamId });
-    teams.push(data.team);
+    const team = data.team;
+
+    // Mark anyone still serving a suspension - checked against THIS game's
+    // own date, so the roster correctly reflects "are they available for
+    // THIS specific game," not just "do they have an active suspension."
+    if (event.start) {
+      const suspended = await getSuspendedPlayers(teamId, event.start);
+      const suspendedIds = new Set(suspended.map((s) => s.profile_id));
+      (team.players || []).forEach((p) => { p.suspended = suspendedIds.has(p.profileId); });
+      (team.staff || []).forEach((s) => { s.suspended = suspendedIds.has(s.profileId); });
+    }
+
+    teams.push(team);
   }
 
   return { event, teams };
@@ -194,6 +241,30 @@ async function fetchGameWithRosters(gameId) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
+
+  // GET /api/suspended-players/:teamId?gameDate=<iso-date> — who on this
+  // team is still serving a suspension as of the given date. Exists as its
+  // own endpoint specifically so this logic can be tested directly, without
+  // needing a real SportsEngine roster fetch.
+  const suspendedMatch = url.pathname.match(/^\/api\/suspended-players\/([^/]+)$/);
+  if (req.method === 'GET' && suspendedMatch) {
+    const teamId = decodeURIComponent(suspendedMatch[1]);
+    const gameDate = url.searchParams.get('gameDate');
+    if (!gameDate) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'gameDate query parameter is required.' }));
+    }
+    try {
+      const suspended = await getSuspendedPlayers(teamId, gameDate);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ suspended }));
+    } catch (err) {
+      console.error('[api/suspended-players] Error:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
 
   // GET /api/config — expose the configured caps to the frontend
   if (req.method === 'GET' && url.pathname === '/api/config') {
