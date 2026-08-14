@@ -318,7 +318,7 @@ describe('Match Report: validation', () => {
   });
 });
 
-// ---------- Match Report: submit, reload, resubmit-replaces ----------
+// ---------- Match Report: submit, reload, no-resubmission lock ----------
 
 describe('Match Report: submit and reload', () => {
   test('a full valid submission is saved and reloadable, and gracefully reports a SportsEngine push failure for a synthetic game ID', async () => {
@@ -350,10 +350,11 @@ describe('Match Report: submit and reload', () => {
     assert.strictEqual(getRes.body.entries[0].name, 'Scorer');
   });
 
-  test('resubmitting the same game REPLACES entries rather than duplicating them', async () => {
+  test('a second submission for the same game is rejected outright - reports can never be resubmitted', async () => {
     const gameId = randomId('test-game');
     const firstPayload = {
       gameId,
+      gameDate: '2026-09-15T18:00:00Z',
       team1: { id: 'teamA', name: 'Team A', score: 2 },
       team2: { id: 'teamB', name: 'Team B', score: 0 },
       entries: [
@@ -361,22 +362,26 @@ describe('Match Report: submit and reload', () => {
         { teamId: 'teamA', teamName: 'Team A', personType: 'player', profileId: 'p1', name: 'Scorer One', eventType: 'Goal', minute: 40, reason: null, supplementalReport: null },
       ],
     };
-    await apiPost('/api/match-report', firstPayload);
+    const firstRes = await apiPost('/api/match-report', firstPayload);
+    assert.strictEqual(firstRes.status, 200, 'first submission should succeed');
 
     const secondPayload = {
       gameId,
+      gameDate: '2026-09-15T18:00:00Z',
       team1: { id: 'teamA', name: 'Team A', score: 1 },
       team2: { id: 'teamB', name: 'Team B', score: 0 },
       entries: [
         { teamId: 'teamA', teamName: 'Team A', personType: 'player', profileId: 'p2', name: 'Scorer Two', eventType: 'Goal', minute: 55, reason: null, supplementalReport: null },
       ],
     };
-    await apiPost('/api/match-report', secondPayload);
+    const secondRes = await apiPost('/api/match-report', secondPayload);
+    assert.strictEqual(secondRes.status, 409, 'resubmitting an already-submitted game should be rejected');
 
+    // Confirm the ORIGINAL data is completely untouched by the rejected attempt.
     const getRes = await apiGet('/api/match-report/' + gameId);
-    assert.strictEqual(getRes.body.entries.length, 1, 'should have exactly 1 entry from the second submission, not 3');
-    assert.strictEqual(getRes.body.entries[0].name, 'Scorer Two');
-    assert.strictEqual(getRes.body.scores.team1_score, 1);
+    assert.strictEqual(getRes.body.entries.length, 2, 'original 2 entries should remain, unaffected by the rejected resubmission');
+    assert.strictEqual(getRes.body.entries[0].name, 'Scorer One');
+    assert.strictEqual(getRes.body.scores.team1_score, 2, 'original score should remain unchanged');
   });
 });
 
@@ -385,12 +390,12 @@ describe('Match Report: submit and reload', () => {
  *
  * 1. NOT CLEANED UP AUTOMATICALLY: match_report_scores and
  *    match_report_entries rows created by these tests are never deleted
- *    (there's no delete-by-gameId endpoint for match reports, only the
- *    replace-on-resubmit behavior tested above). Rows accumulate slowly
- *    over repeated test runs. Low real-world harm (synthetic gameIds are
- *    clearly distinguishable, e.g. "test-game-..."), but worth adding a
- *    real cleanup endpoint or a periodic manual purge if this becomes
- *    noisy in Supabase's Table Editor.
+ *    (there's no delete-by-gameId endpoint for match reports - and now that
+ *    resubmission is blocked entirely, there's no replace-on-resubmit path
+ *    either). Rows accumulate slowly over repeated test runs. Low real-world
+ *    harm (synthetic gameIds are clearly distinguishable, e.g.
+ *    "test-game-..."), but worth adding a real cleanup endpoint or a
+ *    periodic manual purge if this becomes noisy in Supabase's Table Editor.
  *
  * 2. NOT SERVER-ENFORCED (client-side only currently):
  *    - Goal entry count matching the submitted score for each team.
