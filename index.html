@@ -178,6 +178,21 @@
       config = configRes;
       gameData = gameRes;
 
+      // ===== TEMPORARY TEST DATA — REMOVE BEFORE PRODUCTION =====
+      // Marks the first real player on team[0]'s real roster as suspended,
+      // client-side only, purely to visually verify the strikethrough +
+      // "SUSPENDED" treatment. Does NOT touch the real database or the
+      // actual suspension-checking logic in any way - the real server-side
+      // getSuspendedPlayers() check is completely bypassed here.
+      (function injectTestSuspension() {
+        const team = gameData.teams[0];
+        if (team && team.players && team.players.length > 0) {
+          team.players[0].suspended = true;
+          console.log('[TEST DATA] Marked', team.players[0].firstName, team.players[0].lastName, 'as suspended (client-side only) for UI testing.');
+        }
+      })();
+      // ===== END TEMPORARY TEST DATA =====
+
       await loadCheckinState();
       await loadMatchReportState();
 
