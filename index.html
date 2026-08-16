@@ -22,9 +22,8 @@
     button.secondary { background: #fff; color: var(--navy); border: 1px solid var(--border); }
     button:disabled { opacity: .4; cursor: not-allowed; }
     button:hover:not(:disabled) { opacity: .9; }
-    .landing-buttons { display: flex; gap: 12px; margin-top: 14px; }
-    .landing-buttons button { flex: 1; padding: 20px; font-size: 16px; }
-    @media (max-width: 480px) { .landing-buttons { flex-direction: column; } }
+    .landing-buttons { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+    .landing-buttons button { padding: 20px; font-size: 16px; }
     .team-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     @media (max-width: 650px) { .team-columns { grid-template-columns: 1fr; } }
     /* Goals stay side-by-side even on mobile, per requirement - overrides the general mobile-stacking rule above just for this section. */
@@ -80,6 +79,7 @@
   <div id="landingView" class="card" style="display:none;">
     <h2 id="gameTitle" style="margin-top:0; color:var(--navy);"></h2>
     <p class="muted" id="gameSubtitle"></p>
+    <div id="landingTeams" style="display:flex; gap:20px; align-items:center; justify-content:center; margin:16px 0;"></div>
     <div class="landing-buttons">
       <button onclick="showCheckIn()">Check In</button>
       <button id="matchReportBtn" class="secondary" disabled onclick="showMatchReport()">Submit Match Report</button>
@@ -203,6 +203,13 @@
       document.getElementById('gameTitle').textContent = gameData.event.name || teamNames || 'Untitled Game';
       const startStr = gameData.event.start ? new Date(gameData.event.start).toLocaleString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }) : '';
       document.getElementById('gameSubtitle').textContent = [startStr, gameData.event.location && gameData.event.location.name].filter(Boolean).join(' · ');
+
+      document.getElementById('landingTeams').innerHTML = gameData.teams.map(team => `
+        <div style="text-align:center;">
+          ${team.logoUrl ? `<img src="${escapeHtml(team.logoUrl)}" alt="" style="width:56px; height:56px; object-fit:contain; display:block; margin:0 auto 6px;" onerror="this.style.display='none'" />` : ''}
+          <div style="font-weight:700; color:var(--navy); font-size:14px;">${escapeHtml(team.name)}</div>
+        </div>
+      `).join('');
 
       updateMatchReportGate();
     } catch (e) {
