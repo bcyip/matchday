@@ -194,7 +194,7 @@ async function fetchGameWithRosters(gameId) {
         name
         start
         location { name }
-        eventTeams { name homeTeam team { id } }
+        eventTeams { name homeTeam team { id brand { logoUrl } } }
       }
     }`;
   const eventData = await callGraphQL(eventQuery, { id: gameId });
@@ -205,6 +205,13 @@ async function fetchGameWithRosters(gameId) {
   if (teamIds.length !== 2) {
     console.warn('[fetchGameWithRosters] Expected 2 teams, found', teamIds.length, 'for game', gameId);
   }
+
+  // Logos come from the event query above, not the per-team roster query
+  // below - build a lookup so each team object can carry its own logo.
+  const logoByTeamId = {};
+  (event.eventTeams || []).forEach((t) => {
+    if (t.team && t.team.id) logoByTeamId[t.team.id] = (t.team.brand && t.team.brand.logoUrl) || null;
+  });
 
   const rosterQuery = `
     query Team($id: String!) {
@@ -220,6 +227,7 @@ async function fetchGameWithRosters(gameId) {
   for (const teamId of teamIds) {
     const data = await callGraphQL(rosterQuery, { id: teamId });
     const team = data.team;
+    team.logoUrl = logoByTeamId[teamId] || null;
 
     // Mark anyone still serving a suspension - checked against THIS game's
     // own date, so the roster correctly reflects "are they available for

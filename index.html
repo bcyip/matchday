@@ -39,7 +39,7 @@
     .roster-row .rname { flex: 1; font-size: 14.5px; }
     .roster-row input[type="text"] { width: 52px; padding: 10px 4px; border: 1px solid var(--border); border-radius: 6px; text-align: center; font-size: 16px; min-height: 40px; }
     .roster-row input:disabled { background: var(--bg); cursor: not-allowed; }
-    .team-select-tile { flex: 1; border: 2px solid var(--border); border-radius: 10px; padding: 18px 16px; text-align: center; cursor: pointer; user-select: none; min-height: 46px; display: flex; align-items: center; justify-content: center; }
+    .team-select-tile { flex: 1; border: 2px solid var(--border); border-radius: 10px; padding: 18px 16px; text-align: center; cursor: pointer; user-select: none; min-height: 46px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
     .team-select-tile.selected { border-color: var(--navy); background: #F4F9FD; }
     .team-select-tile .tname { font-weight: 700; color: var(--navy); font-size: 15px; }
     .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--gray); margin: 14px 0 4px; }
@@ -246,6 +246,7 @@
     container.innerHTML = gameData.teams.map(team => `
       <div class="team-select-tile ${activeCheckinTeamId === team.id ? 'selected' : ''}"
         onclick="selectActiveTeam('${escapeJs(team.id)}')">
+        ${team.logoUrl ? `<img src="${escapeHtml(team.logoUrl)}" alt="" style="width:44px; height:44px; object-fit:contain; margin-bottom:6px;" onerror="this.style.display='none'" />` : ''}
         <div class="tname">${escapeHtml(team.name)}</div>
       </div>
     `).join('');
@@ -563,7 +564,10 @@
     const scoreContainer = document.getElementById('scoreGoalColumns');
     scoreContainer.innerHTML = gameData.teams.map(team => `
       <div>
-        <h3 style="color:var(--navy); margin-bottom:6px;">${escapeHtml(team.name)}</h3>
+        <h3 style="color:var(--navy); margin-bottom:6px; display:flex; align-items:center; gap:8px;">
+          ${team.logoUrl ? `<img src="${escapeHtml(team.logoUrl)}" alt="" style="width:28px; height:28px; object-fit:contain;" onerror="this.style.display='none'" />` : ''}
+          ${escapeHtml(team.name)}
+        </h3>
         <div class="score-input-row">
           <span class="muted">Score:</span>
           <input type="number" inputmode="numeric" min="0" id="score-${team.id}" value="${reportScores[team.id] != null ? reportScores[team.id] : ''}"
