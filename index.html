@@ -200,7 +200,16 @@
       document.getElementById('landingView').style.display = 'block';
 
       const teamNames = (gameData.event.eventTeams || []).map(t => t.name).join(' vs ');
-      document.getElementById('gameTitle').textContent = gameData.event.name || teamNames || 'Untitled Game';
+      const teams = gameData.teams || [];
+      if (teams.length === 2) {
+        document.getElementById('gameTitle').innerHTML = `
+          ${teams[0].logoUrl ? `<img src="${escapeHtml(teams[0].logoUrl)}" alt="" style="width:32px; height:32px; object-fit:contain; vertical-align:middle; margin-right:6px;" onerror="this.style.display='none'" />` : ''}
+          ${escapeHtml(teams[0].name)} vs ${escapeHtml(teams[1].name)}
+          ${teams[1].logoUrl ? `<img src="${escapeHtml(teams[1].logoUrl)}" alt="" style="width:32px; height:32px; object-fit:contain; vertical-align:middle; margin-left:6px;" onerror="this.style.display='none'" />` : ''}
+        `;
+      } else {
+        document.getElementById('gameTitle').textContent = gameData.event.name || teamNames || 'Untitled Game';
+      }
       const startStr = gameData.event.start ? new Date(gameData.event.start).toLocaleString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }) : '';
       document.getElementById('gameSubtitle').textContent = [startStr, gameData.event.location && gameData.event.location.name].filter(Boolean).join(' · ');
 
