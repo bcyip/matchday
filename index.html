@@ -145,7 +145,7 @@
   const gameId = params.get('game');
 
   let gameData = null;
-  let config = { maxPlayers: 18, maxStaff: 5 };
+  let config = { maxPlayers: 18, maxStaff: 5, minPlayersRequired: 7 };
   let checkinState = {}; // teamId:profileId -> { jerseyNumber, personType }
 
   function showError(msg) {
@@ -905,6 +905,17 @@
     const resultEl = document.getElementById('reportSubmitResult');
     resultEl.innerHTML = '';
     const btn = document.getElementById('submitReportBtn');
+
+    const minPlayersRequired = config.minPlayersRequired;
+    for (const team of gameData.teams) {
+      const playerCount = Object.entries(checkinState).filter(
+        ([key, val]) => key.startsWith(team.id + ':') && val.personType === 'player'
+      ).length;
+      if (playerCount < minPlayersRequired) {
+        resultEl.innerHTML = `<div class="err">${escapeHtml(team.name)}: only ${playerCount} of the required ${minPlayersRequired} players are checked in. Complete Check-In before submitting.</div>`;
+        return;
+      }
+    }
 
     const scores = {};
     for (const team of gameData.teams) {

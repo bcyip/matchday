@@ -45,6 +45,7 @@ const STANDARD_SUSPENSION_GAMES = {
   'Biting or Spitting': 3,
 };
 const MAX_STAFF_CHECKIN = parseInt(process.env.MAX_STAFF_CHECKIN || '5', 10);
+const MIN_PLAYERS_REQUIRED = parseInt(process.env.MIN_PLAYERS_REQUIRED || '7', 10);
 
 // ---------- Postgres ----------
 
@@ -277,7 +278,7 @@ const server = http.createServer(async (req, res) => {
   // GET /api/config — expose the configured caps to the frontend
   if (req.method === 'GET' && url.pathname === '/api/config') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ maxPlayers: MAX_PLAYERS_CHECKIN, maxStaff: MAX_STAFF_CHECKIN }));
+    res.end(JSON.stringify({ maxPlayers: MAX_PLAYERS_CHECKIN, maxStaff: MAX_STAFF_CHECKIN, minPlayersRequired: MIN_PLAYERS_REQUIRED }));
     return;
   }
 
@@ -681,7 +682,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`MAX_PLAYERS_CHECKIN=${MAX_PLAYERS_CHECKIN}, MAX_STAFF_CHECKIN=${MAX_STAFF_CHECKIN}`);
+  console.log(`MAX_PLAYERS_CHECKIN=${MAX_PLAYERS_CHECKIN}, MAX_STAFF_CHECKIN=${MAX_STAFF_CHECKIN}, MIN_PLAYERS_REQUIRED=${MIN_PLAYERS_REQUIRED}`);
   if (!SE_REFRESH_TOKEN) {
     console.warn('WARNING: no SE_REFRESH_TOKEN set. SportsEngine calls will fail until this is configured.');
   }
