@@ -35,6 +35,7 @@
     .roster-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); min-height: 44px; }
     .roster-row.readonly { opacity: .5; }
     .roster-row.readonly .rname { color: var(--gray); }
+    .done-banner { background: #E9F6EE; border: 1px solid var(--success); border-radius: 8px; padding: 16px; text-align: center; }
     .roster-row input[type="checkbox"] { width: 24px; height: 24px; flex-shrink: 0; }
     .roster-row .rname { flex: 1; font-size: 14.5px; }
     .roster-row input[type="text"] { width: 52px; padding: 10px 4px; border: 1px solid var(--border); border-radius: 6px; text-align: center; font-size: 16px; min-height: 40px; }
@@ -289,24 +290,31 @@
     const staffCount = countCheckedIn(team.id, 'staff');
     const isDone = !!teamDoneState[team.id];
 
-    container.innerHTML = `
-      ${isDone ? `
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
-          <div style="font-size:14px; font-weight:700; color:var(--success);">✓ Check-In Complete — ${escapeHtml(team.name)}</div>
+    if (isDone) {
+      // Roster is fully hidden once checked in - just a compact confirmation.
+      container.innerHTML = `
+        <div class="done-banner">
+          <div style="font-size:15px; font-weight:700; color:var(--success);">✓ Check-In Complete — ${escapeHtml(team.name)}</div>
+          <div class="muted" style="margin:4px 0 10px;">${playerCount} of ${config.maxPlayers} players, ${staffCount} of ${config.maxStaff} staff checked in.</div>
           <button class="secondary" onclick="editTeamCheckin('${escapeJs(team.id)}')">Edit</button>
         </div>
-      ` : `<p class="muted" style="margin-top:0;">Enter a player's jersey number to check them in. Clear the number to remove them.</p>`}
+      `;
+      return;
+    }
+
+    container.innerHTML = `
+      <p class="muted" style="margin-top:0;">Enter a player's jersey number to check them in. Clear the number to remove them.</p>
       <div class="section-label">Staff</div>
       <div class="cap-counter" id="staffCap-${team.id}">${staffCount} of ${config.maxStaff} checked in</div>
       <div id="staff-${team.id}"></div>
       <div class="section-label">Players</div>
       <div class="cap-counter" id="playerCap-${team.id}">${playerCount} of ${config.maxPlayers} checked in</div>
       <div id="players-${team.id}"></div>
-      ${!isDone ? `<button style="width:100%; margin-top:14px;" onclick="markTeamDone('${escapeJs(team.id)}')">Done — ${escapeHtml(team.name)} Check-In Complete</button>` : ''}
+      <button style="width:100%; margin-top:14px;" onclick="markTeamDone('${escapeJs(team.id)}')">Done — ${escapeHtml(team.name)} Check-In Complete</button>
     `;
 
-    renderRosterList(team.id, team.name, 'staff-' + team.id, team.staff || [], 'staff', isDone);
-    renderRosterList(team.id, team.name, 'players-' + team.id, team.players || [], 'player', isDone);
+    renderRosterList(team.id, team.name, 'staff-' + team.id, team.staff || [], 'staff', false);
+    renderRosterList(team.id, team.name, 'players-' + team.id, team.players || [], 'player', false);
   }
 
   async function markTeamDone(teamId) {
