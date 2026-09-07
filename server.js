@@ -138,6 +138,18 @@ async function callGraphQL(query, variables) {
   });
 }
 
+// Derives gender from program.primaryName (e.g. "College Club Soccer -
+// Men FA 2026"). "women" is checked FIRST since "Women" contains "men" as
+// a substring (wo-MEN) - checking "men" first would misclassify every
+// women's team. Same logic as the schedule monitor, kept consistent.
+function deriveGenderFromProgramName(primaryName) {
+  if (!primaryName) return null;
+  const lower = primaryName.toLowerCase();
+  if (lower.includes('women')) return 'Women';
+  if (lower.includes('men')) return 'Men';
+  return null;
+}
+
 async function getSuspendedPlayers(teamId, asOfGameDate) {
   const result = await pool.query(
     `SELECT s.profile_id, s.player_name, s.games_suspended, s.standard_games, s.issued_from_game_date,
@@ -163,7 +175,7 @@ async function fetchGameWithRosters(gameId) {
         name
         start
         location { name }
-        eventTeams { name homeTeam team { id brand { logoUrl } } }
+        eventTeams { name homeTeam team { id divisionId program { primaryName } brand { logoUrl } } }
       }
     }`;
   const eventData = await callGraphQL(eventQuery, { id: gameId });
@@ -176,8 +188,15 @@ async function fetchGameWithRosters(gameId) {
   }
 
   const logoByTeamId = {};
+  const divisionByTeamId = {};
   (event.eventTeams || []).forEach((t) => {
-    if (t.team && t.team.id) logoByTeamId[t.team.id] = (t.team.brand && t.team.brand.logoUrl) || null;
+    if (t.team && t.team.id) {
+      logoByTeamId[t.team.id] = (t.team.brand && t.team.brand.logoUrl) || null;
+      divisionByTeamId[t.team.id] = {
+        divisionId: t.team.divisionId || null,
+        gender: deriveGenderFromProgramName(t.team.program && t.team.program.primaryName),
+      };
+    }
   });
 
   const rosterQuery = `
@@ -195,6 +214,8 @@ async function fetchGameWithRosters(gameId) {
     const data = await callGraphQL(rosterQuery, { id: teamId });
     const team = data.team;
     team.logoUrl = logoByTeamId[teamId] || null;
+    team.divisionId = (divisionByTeamId[teamId] && divisionByTeamId[teamId].divisionId) || null;
+    team.gender = (divisionByTeamId[teamId] && divisionByTeamId[teamId].gender) || null;
 
     if (event.start) {
       const suspended = await getSuspendedPlayers(teamId, event.start);
@@ -503,7 +524,7 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ error: 'Invalid JSON body' }));
       }
 
-      const { gameId, gameDate, team1, team2, entries } = payload;
+      const { gameId, gameDate, team1, team2, entries, divisionId, gender } = payload;
 
       if (!gameId || !team1 || !team2 || !Array.isArray(entries)) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -560,9 +581,9 @@ const server = http.createServer(async (req, res) => {
         }
 
         await client.query(
-          `INSERT INTO match_report_scores (game_id, game_date, team1_id, team1_name, team1_score, team2_id, team2_name, team2_score, submitted_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
-          [gameId, gameDate || null, team1.id, team1.name, team1.score, team2.id, team2.name, team2.score]
+          `INSERT INTO match_report_scores (game_id, game_date, team1_id, team1_name, team1_score, team2_id, team2_name, team2_score, submitted_at, division_id, gender)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), $9, $10)`,
+          [gameId, gameDate || null, team1.id, team1.name, team1.score, team2.id, team2.name, team2.score, divisionId || null, gender || null]
         );
 
         for (const e of entries) {
