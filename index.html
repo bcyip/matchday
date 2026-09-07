@@ -963,15 +963,55 @@
 
       if (json.scoreUpdated) {
         resultEl.innerHTML = '<div style="color:var(--success); font-size:13px;">Match report saved, and the score was pushed to SportsEngine successfully.</div>';
+        btn.style.display = 'none'; // report is fully done - nothing left to retry, no button needed
       } else {
-        resultEl.innerHTML = '<div class="err">Report saved, but pushing the score to SportsEngine failed: ' +
-          escapeHtml(json.scoreError || 'unknown error') + '. Your entries are safe — you can resubmit to retry the score push.</div>';
+        resultEl.innerHTML = '<div class="err">Report saved successfully — your entries and score are safe. Only the sync to SportsEngine\'s own scoreboard failed: ' +
+          escapeHtml(json.scoreError || 'unknown error') + '</div>';
+        // Same button, not a new one - relabel it to retry ONLY the score
+        // push. A normal resubmit would always be rejected at this point
+        // (the report is already saved), so it must never say "resubmit."
+        btn.textContent = 'Retry Score Push to SportsEngine';
+        btn.onclick = retryScorePush;
       }
     } catch (e) {
       resultEl.innerHTML = '<div class="err">Submit failed: ' + escapeHtml(e.message) + '</div>';
     } finally {
+      if (btn.style.display !== 'none') {
+        btn.disabled = false;
+        // Don't stomp the "Retry Score Push" label if that's what was just set above.
+        if (btn.textContent === 'Submitting...') btn.textContent = 'Submit Match Report';
+      }
+    }
+  }
+
+  // Retries ONLY the SportsEngine score push, using the score already saved
+  // in Postgres - never a full resubmission (which the backend always
+  // rejects once the report is saved). Called by the SAME button that
+  // originally said "Submit Match Report," relabeled - never a second button.
+  async function retryScorePush() {
+    const resultEl = document.getElementById('reportSubmitResult');
+    const btn = document.getElementById('submitReportBtn');
+    btn.disabled = true;
+    btn.textContent = 'Retrying...';
+
+    try {
+      const res = await fetch('/api/match-report/' + encodeURIComponent(gameId) + '/retry-score-push', { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Unknown error');
+
+      if (json.scoreUpdated) {
+        resultEl.innerHTML = '<div style="color:var(--success); font-size:13px;">Score pushed to SportsEngine successfully.</div>';
+        btn.style.display = 'none'; // fully done now - nothing left to retry
+      } else {
+        resultEl.innerHTML = '<div class="err">Still failed to push the score to SportsEngine: ' +
+          escapeHtml(json.scoreError || 'unknown error') + '. Your report remains safely saved - try again whenever ready.</div>';
+        btn.disabled = false;
+        btn.textContent = 'Retry Score Push to SportsEngine';
+      }
+    } catch (e) {
+      resultEl.innerHTML = '<div class="err">Retry failed: ' + escapeHtml(e.message) + '</div>';
       btn.disabled = false;
-      btn.textContent = 'Submit Match Report';
+      btn.textContent = 'Retry Score Push to SportsEngine';
     }
   }
 
