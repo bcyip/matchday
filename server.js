@@ -198,9 +198,14 @@ async function fetchGameWithRosters(gameId) {
 
     if (event.start) {
       const suspended = await getSuspendedPlayers(teamId, event.start);
-      const suspendedIds = new Set(suspended.map((s) => s.profile_id));
-      (team.players || []).forEach((p) => { p.suspended = suspendedIds.has(p.profileId); });
-      (team.staff || []).forEach((s) => { s.suspended = suspendedIds.has(s.profileId); });
+      // Normalize to strings on both sides - SportsEngine returns profileId
+      // as a raw JS number, while Postgres's profile_id column comes back
+      // as a string. Set.has() and === both use strict equality, so
+      // "66976676" !== 66976676 even though they represent the same
+      // player - this silently broke suspension display until fixed here.
+      const suspendedIds = new Set(suspended.map((s) => String(s.profile_id)));
+      (team.players || []).forEach((p) => { p.suspended = suspendedIds.has(String(p.profileId)); });
+      (team.staff || []).forEach((s) => { s.suspended = suspendedIds.has(String(s.profileId)); });
     }
 
     teams.push(team);
@@ -345,7 +350,14 @@ const server = http.createServer(async (req, res) => {
 
       if (action === 'add' && gameDate) {
         const suspended = await getSuspendedPlayers(teamId, gameDate);
-        if (suspended.some((s) => s.profile_id === profileId)) {
+        // Same string-vs-number fix as the roster display above - profileId
+        // arrives here as whatever JSON.stringify produced from the
+        // frontend's roster data (a raw number), while profile_id from
+        // Postgres is a string. Without normalizing both to strings, this
+        // check silently never matched, meaning a suspended player could
+        // actually be checked in - not just a display bug like the other
+        // instance, this one bypassed real enforcement.
+        if (suspended.some((s) => String(s.profile_id) === String(profileId))) {
           res.writeHead(409, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: name + ' is suspended and cannot be checked in for this game.' }));
         }
