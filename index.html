@@ -351,7 +351,8 @@
 
   function renderRosterList(teamId, teamName, containerId, people, personType, readOnly) {
     const container = document.getElementById(containerId);
-    container.innerHTML = people.map(p => {
+    const sortedPeople = [...people].sort((a, b) => (a.firstName || '').localeCompare(b.firstName || ''));
+    container.innerHTML = sortedPeople.map(p => {
       const profileId = p.profileId;
       const name = (p.firstName + ' ' + p.lastName).trim();
       const key = teamId + ':' + profileId;
@@ -750,7 +751,14 @@
     const listEl = document.getElementById('reportPickerList');
     const people = Object.entries(checkinState)
       .filter(([key]) => key.startsWith(teamId + ':'))
-      .map(([key, val]) => ({ profileId: key.split(':')[1], ...val }));
+      .map(([key, val]) => ({ profileId: key.split(':')[1], ...val }))
+      .sort((a, b) => {
+        const aNum = parseInt(a.jerseyNumber, 10);
+        const bNum = parseInt(b.jerseyNumber, 10);
+        // Staff (and anyone without a jersey number) sort after all
+        // numbered players, using Infinity as the fallback sort key.
+        return (isNaN(aNum) ? Infinity : aNum) - (isNaN(bNum) ? Infinity : bNum);
+      });
 
     const backLink = needsTeamChoice
       ? `<a href="#" onclick="renderTeamChoiceForPicker(); return false;" class="back-link">← Back to team</a>`
