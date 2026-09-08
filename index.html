@@ -485,7 +485,14 @@
     return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
   function escapeJs(str) {
-    return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    // Backslashes first (so later escaping doesn't get double-escaped),
+    // then single quotes (the JS string literal delimiter used
+    // everywhere), then double quotes as an HTML entity - every onclick
+    // built with this function sits inside a double-quoted HTML attribute,
+    // so a literal " in the data (e.g. a team name like Coastal Carolina
+    // "B") would otherwise close that attribute early and corrupt the
+    // markup, exactly like the earlier venues.html bug in a different app.
+    return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
   }
 
   // ---------- Match Report ----------
