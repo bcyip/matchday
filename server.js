@@ -90,6 +90,12 @@ function refreshAccessToken() {
       }
     );
     req.on('error', reject);
+    // Same timeout protection as callGraphQL - see that function's comment
+    // for the full reasoning.
+    req.setTimeout(15000, () => {
+      req.destroy();
+      reject(new Error('Timed out waiting for SportsEngine to respond to the token refresh request (15s).'));
+    });
     req.write(body);
     req.end();
   });
@@ -133,6 +139,17 @@ async function callGraphQL(query, variables) {
       }
     );
     req.on('error', reject);
+    // Explicit timeout, deliberately shorter than DigitalOcean's own
+    // platform-level request timeout - if SportsEngine is slow (which can
+    // precede it returning a bad/HTML response), this ensures OUR clean
+    // error handling fires first, so the browser always gets a proper
+    // JSON error from us instead of DO's raw HTML timeout page reaching
+    // the frontend directly (which is what likely caused the original
+    // "Unexpected token '<'" crash - see conversation).
+    req.setTimeout(15000, () => {
+      req.destroy();
+      reject(new Error('Timed out waiting for SportsEngine to respond (15s).'));
+    });
     req.write(body);
     req.end();
   });
@@ -494,7 +511,7 @@ const server = http.createServer(async (req, res) => {
       const { team1_score, team2_score } = scoresResult.rows[0];
 
       const mutation = `
-        mutation UpdateScore($eventId: ID!, $s1: String!, $s2: String!) {
+        mutation UpdateScore($eventId: String!, $s1: String!, $s2: String!) {
           updateScore(eventId: $eventId, scoreTeam1: $s1, scoreTeam2: $s2) {
             name
             eventTeams { name score }
@@ -624,7 +641,7 @@ const server = http.createServer(async (req, res) => {
       let scoreError = null;
       try {
         const mutation = `
-          mutation UpdateScore($eventId: ID!, $s1: String!, $s2: String!) {
+          mutation UpdateScore($eventId: String!, $s1: String!, $s2: String!) {
             updateScore(eventId: $eventId, scoreTeam1: $s1, scoreTeam2: $s2) {
               name
               eventTeams { name score }
