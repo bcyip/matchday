@@ -124,6 +124,15 @@
         <button class="secondary add-event-btn" onclick="openMisconductPicker('Red Card')">+ Add Red Card</button>
       </div>
 
+      <div class="report-section">
+        <button class="secondary add-event-btn" id="incidentReportToggleBtn" onclick="toggleIncidentReport()">+ Add Incident Report</button>
+        <div id="incidentReportSection" style="display:none; margin-top:10px;">
+          <div class="section-label" style="margin-top:0;">Incident Report</div>
+          <p class="muted" style="margin-top:-4px;">For anything not covered by an individual card - fights, spectator issues, or other incidents involving the match as a whole.</p>
+          <textarea id="incidentReportText" placeholder="Describe the incident..." style="width:100%; box-sizing:border-box; min-height:140px; padding:10px; border:1px solid var(--border); border-radius:8px; font-size:15px; font-family:inherit;"></textarea>
+        </div>
+      </div>
+
       <button id="submitReportBtn" style="width:100%; margin-top:18px; padding:14px; font-size:15px;" onclick="submitMatchReport()">Submit Match Report</button>
       <div id="reportSubmitResult" style="margin-top:10px;"></div>
     </div>
@@ -503,15 +512,18 @@
   let reportScores = {}; // teamId -> score
   let reportEntries = []; // {teamId, teamName, personType, profileId, name, eventType, minute, reason}
   let reportAlreadySubmitted = false;
+  let reportIncidentReport = null;
   let activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null, needsTeamChoice: false };
 
   async function loadMatchReportState() {
     const res = await fetch('/api/match-report/' + encodeURIComponent(gameId));
     const data = await res.json();
     reportScores = {};
+    reportIncidentReport = null;
     if (data.scores) {
       reportScores[data.scores.team1_id] = data.scores.team1_score;
       reportScores[data.scores.team2_id] = data.scores.team2_score;
+      reportIncidentReport = data.scores.incident_report || null;
     }
     reportEntries = (data.entries || []).map(e => ({
       teamId: e.team_id, teamName: e.team_name, personType: e.person_type,
@@ -572,7 +584,12 @@
       <div style="margin-bottom:16px;">${entryLines('Yellow Card', '🟨')}</div>
 
       <div class="section-label">Red Cards</div>
-      <div>${entryLines('Red Card', '🟥')}</div>
+      <div${reportIncidentReport ? ' style="margin-bottom:16px;"' : ''}>${entryLines('Red Card', '🟥')}</div>
+
+      ${reportIncidentReport ? `
+        <div class="section-label">Incident Report</div>
+        <div style="white-space:pre-wrap; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; font-size:14px;">${escapeHtml(reportIncidentReport)}</div>
+      ` : ''}
     `;
   }
 
@@ -723,6 +740,14 @@
 
   // Yellow/Red Card sections are unified across both teams, so the picker's
   // first step here is choosing which team the card belongs to.
+  function toggleIncidentReport() {
+    const section = document.getElementById('incidentReportSection');
+    const btn = document.getElementById('incidentReportToggleBtn');
+    const isHidden = section.style.display === 'none';
+    section.style.display = isHidden ? 'block' : 'none';
+    btn.textContent = isHidden ? '− Hide Incident Report' : '+ Add Incident Report';
+  }
+
   function openMisconductPicker(eventType) {
     activeReportPicker = { teamId: null, teamName: null, eventType, pendingPerson: null, needsTeamChoice: true };
     document.getElementById('reportPickerTitle').textContent = 'Select Team — ' + eventType;
@@ -970,6 +995,7 @@
       // division/gender, same convention already established elsewhere.
       divisionId: gameData.teams[0].divisionId || null,
       gender: gameData.teams[0].gender || null,
+      incidentReport: document.getElementById('incidentReportText').value.trim() || null,
     };
 
     try {
