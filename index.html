@@ -370,7 +370,7 @@
       const disabledAttr = (readOnly || p.suspended) ? 'disabled' : '';
 
       const control = personType === 'player'
-        ? `<input type="text" inputmode="numeric" maxlength="2" placeholder="#" value="${escapeHtml(currentJersey)}"
+        ? `<input type="text" inputmode="numeric" maxlength="3" placeholder="#" value="${escapeHtml(currentJersey)}"
              id="jersey-${key}" ${disabledAttr}
              onchange="onPlayerJerseyInput('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${escapeJs(profileId)}', '${escapeJs(name)}')" />`
         : `<input type="checkbox" id="chk-${key}" ${isChecked ? 'checked' : ''} ${disabledAttr}
