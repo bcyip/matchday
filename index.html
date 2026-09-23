@@ -134,8 +134,8 @@
       </div>
 
       <div class="report-section">
-        <div class="section-label" style="margin-top:0;">Crew Changes Needed?</div>
-        <p class="muted" style="margin-top:-4px;">Do any referee crew changes need to be made for future assignments?</p>
+        <div class="section-label" style="margin-top:0;">Does This Game Need Adjustment?</div>
+        <p class="muted" style="margin-top:-4px;">Do any referee crew changes need to be made for this game?</p>
         <div style="display:flex; gap:16px;">
           <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:400;">
             <input type="radio" name="crewChangesNeeded" value="yes" />
@@ -144,6 +144,24 @@
           <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:400;">
             <input type="radio" name="crewChangesNeeded" value="no" checked />
             No
+          </label>
+        </div>
+      </div>
+
+      <div class="report-section">
+        <div class="section-label" style="margin-top:0;">How Many Officials Were Present?</div>
+        <div style="display:flex; gap:16px;">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:400;">
+            <input type="radio" name="officialsPresent" value="1" />
+            1
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:400;">
+            <input type="radio" name="officialsPresent" value="2" />
+            2
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:400;">
+            <input type="radio" name="officialsPresent" value="3" checked />
+            3
           </label>
         </div>
       </div>
@@ -1041,6 +1059,7 @@
       gender: gameData.teams[0].gender || null,
       incidentReport: document.getElementById('incidentReportText').value.trim() || null,
       crewChangesNeeded: document.querySelector('input[name="crewChangesNeeded"]:checked').value === 'yes',
+      officialsPresent: parseInt(document.querySelector('input[name="officialsPresent"]:checked').value, 10),
     };
 
     try {
