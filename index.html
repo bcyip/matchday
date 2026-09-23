@@ -80,12 +80,12 @@
   <!-- LANDING: game info + Check In / Match Report choice -->
   <div id="landingView" class="card" style="display:none;">
     <h2 id="gameTitle" style="margin-top:0; color:var(--navy);"></h2>
-    <p class="muted" id="gameSubtitle"></p>
+    <p class="muted" id="gameSubtitle" style="text-align:center;"></p>
     <div class="landing-buttons">
       <button onclick="showCheckIn()">Check In</button>
       <button id="matchReportBtn" class="secondary" disabled onclick="showMatchReport()">Submit Match Report</button>
     </div>
-    <p class="muted" style="margin-top:10px;" id="matchReportGateNote">Complete Check-In for at least one player before Match Report unlocks.</p>
+    <p class="muted" style="margin-top:10px; text-align:center; color:var(--danger); font-weight:600;" id="matchReportGateNote">Complete Check-In for at least one player before Match Report unlocks.</p>
   </div>
 
   <!-- CHECK-IN VIEW -->
@@ -214,7 +214,7 @@
         document.getElementById('gameTitle').textContent = gameData.event.name || teamNames || 'Untitled Game';
       }
       const startStr = gameData.event.start ? new Date(gameData.event.start).toLocaleString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }) : '';
-      document.getElementById('gameSubtitle').textContent = [startStr, gameData.event.location && gameData.event.location.name].filter(Boolean).join(' · ');
+      document.getElementById('gameSubtitle').innerHTML = [startStr, gameData.event.location && gameData.event.location.name].filter(Boolean).map(escapeHtml).join('<br>');
 
       updateMatchReportGate();
     } catch (e) {
