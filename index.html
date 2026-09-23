@@ -81,11 +81,11 @@
   <div id="landingView" class="card" style="display:none;">
     <h2 id="gameTitle" style="margin-top:0; color:var(--navy);"></h2>
     <p class="muted" id="gameSubtitle" style="text-align:center;"></p>
+    <p class="muted" style="margin-top:10px; margin-bottom:0; text-align:center; color:var(--danger); font-weight:600;" id="matchReportGateNote">Complete Check-In for at least one player before Match Report unlocks.</p>
     <div class="landing-buttons">
       <button onclick="showCheckIn()">Check In</button>
       <button id="matchReportBtn" class="secondary" disabled onclick="showMatchReport()">Submit Match Report</button>
     </div>
-    <p class="muted" style="margin-top:10px; text-align:center; color:var(--danger); font-weight:600;" id="matchReportGateNote">Complete Check-In for at least one player before Match Report unlocks.</p>
   </div>
 
   <!-- CHECK-IN VIEW -->
@@ -130,6 +130,21 @@
           <div class="section-label" style="margin-top:0;">Incident Report</div>
           <p class="muted" style="margin-top:-4px;">For anything not covered by an individual card - fights, spectator issues, or other incidents involving the match as a whole.</p>
           <textarea id="incidentReportText" placeholder="Describe the incident..." style="width:100%; box-sizing:border-box; min-height:140px; padding:10px; border:1px solid var(--border); border-radius:8px; font-size:15px; font-family:inherit;"></textarea>
+        </div>
+      </div>
+
+      <div class="report-section">
+        <div class="section-label" style="margin-top:0;">Crew Changes Needed?</div>
+        <p class="muted" style="margin-top:-4px;">Do any referee crew changes need to be made for future assignments?</p>
+        <div style="display:flex; gap:16px;">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:400;">
+            <input type="radio" name="crewChangesNeeded" value="yes" />
+            Yes
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:400;">
+            <input type="radio" name="crewChangesNeeded" value="no" checked />
+            No
+          </label>
         </div>
       </div>
 
@@ -214,7 +229,8 @@
         document.getElementById('gameTitle').textContent = gameData.event.name || teamNames || 'Untitled Game';
       }
       const startStr = gameData.event.start ? new Date(gameData.event.start).toLocaleString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }) : '';
-      document.getElementById('gameSubtitle').innerHTML = [startStr, gameData.event.location && gameData.event.location.name].filter(Boolean).map(escapeHtml).join('<br>');
+      const genderStr = teams[0] && teams[0].gender ? teams[0].gender : '';
+      document.getElementById('gameSubtitle').innerHTML = [startStr, genderStr, gameData.event.location && gameData.event.location.name].filter(Boolean).map(escapeHtml).join('<br>');
 
       updateMatchReportGate();
     } catch (e) {
@@ -235,10 +251,38 @@
     (data.completedTeamIds || []).forEach(teamId => { teamDoneState[teamId] = true; });
   }
 
+  const MIN_PLAYERS_CHECKED_IN = 7;
+
   function updateMatchReportGate() {
-    const anyCheckedIn = Object.keys(checkinState).length > 0;
-    document.getElementById('matchReportBtn').disabled = !anyCheckedIn;
-    document.getElementById('matchReportGateNote').style.display = anyCheckedIn ? 'none' : 'block';
+    const team1Id = gameData && gameData.teams && gameData.teams[0] && gameData.teams[0].id;
+    const team2Id = gameData && gameData.teams && gameData.teams[1] && gameData.teams[1].id;
+
+    const countCheckedInPlayers = (teamId) => {
+      if (!teamId) return 0;
+      return Object.entries(checkinState).filter(([key, v]) => {
+        const [entryTeamId] = key.split(':');
+        return entryTeamId === teamId && v.personType === 'player';
+      }).length;
+    };
+
+    const team1Count = countCheckedInPlayers(team1Id);
+    const team2Count = countCheckedInPlayers(team2Id);
+    const bothTeamsReady = team1Count >= MIN_PLAYERS_CHECKED_IN && team2Count >= MIN_PLAYERS_CHECKED_IN;
+
+    document.getElementById('matchReportBtn').disabled = !bothTeamsReady;
+
+    const noteEl = document.getElementById('matchReportGateNote');
+    if (bothTeamsReady) {
+      noteEl.style.display = 'none';
+    } else {
+      const team1Name = (gameData.teams[0] && gameData.teams[0].name) || 'Team 1';
+      const team2Name = (gameData.teams[1] && gameData.teams[1].name) || 'Team 2';
+      const parts = [];
+      if (team1Count < MIN_PLAYERS_CHECKED_IN) parts.push(`${escapeHtml(team1Name)} (${team1Count}/${MIN_PLAYERS_CHECKED_IN})`);
+      if (team2Count < MIN_PLAYERS_CHECKED_IN) parts.push(`${escapeHtml(team2Name)} (${team2Count}/${MIN_PLAYERS_CHECKED_IN})`);
+      noteEl.innerHTML = `Both teams need at least ${MIN_PLAYERS_CHECKED_IN} players checked in before Match Report unlocks. Still needed: ${parts.join(' and ')}.`;
+      noteEl.style.display = 'block';
+    }
   }
 
   function showCheckIn() {
@@ -996,6 +1040,7 @@
       divisionId: gameData.teams[0].divisionId || null,
       gender: gameData.teams[0].gender || null,
       incidentReport: document.getElementById('incidentReportText').value.trim() || null,
+      crewChangesNeeded: document.querySelector('input[name="crewChangesNeeded"]:checked').value === 'yes',
     };
 
     try {

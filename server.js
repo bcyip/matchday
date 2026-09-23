@@ -541,7 +541,7 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ error: 'Invalid JSON body' }));
       }
 
-      const { gameId, gameDate, team1, team2, entries, divisionId, gender, incidentReport } = payload;
+      const { gameId, gameDate, team1, team2, entries, divisionId, gender, incidentReport, crewChangesNeeded } = payload;
 
       if (!gameId || !team1 || !team2 || !Array.isArray(entries)) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -598,9 +598,9 @@ const server = http.createServer(async (req, res) => {
         }
 
         await client.query(
-          `INSERT INTO match_report_scores (game_id, game_date, team1_id, team1_name, team1_score, team2_id, team2_name, team2_score, submitted_at, division_id, gender, incident_report)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), $9, $10, $11)`,
-          [gameId, gameDate || null, team1.id, team1.name, team1.score, team2.id, team2.name, team2.score, divisionId || null, gender || null, incidentReport || null]
+          `INSERT INTO match_report_scores (game_id, game_date, team1_id, team1_name, team1_score, team2_id, team2_name, team2_score, submitted_at, division_id, gender, incident_report, crew_changes_needed)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), $9, $10, $11, $12)`,
+          [gameId, gameDate || null, team1.id, team1.name, team1.score, team2.id, team2.name, team2.score, divisionId || null, gender || null, incidentReport || null, crewChangesNeeded === true]
         );
 
         for (const e of entries) {
