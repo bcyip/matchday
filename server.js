@@ -155,6 +155,22 @@ async function callGraphQL(query, variables) {
   });
 }
 
+/**
+ * Marks a game's status as COMPLETED in SportsEngine. Only ever called
+ * AFTER a successful updateScore - never before, and never if the score
+ * push itself failed, per explicit requirement: the game's status should
+ * only reflect "complete" once the score is actually recorded.
+ */
+async function markGameComplete(gameId) {
+  const mutation = `
+    mutation UpdateEvent($id: String!) {
+      updateEvent(id: $id, input: { gameStatus: COMPLETED, type: GAME }) {
+        id
+      }
+    }`;
+  await callGraphQL(mutation, { id: gameId });
+}
+
 // Derives gender from program.primaryName (e.g. "College Club Soccer -
 // Men FA 2026"). "women" is checked FIRST since "Women" contains "men" as
 // a substring (wo-MEN) - checking "men" first would misclassify every
@@ -519,8 +535,18 @@ const server = http.createServer(async (req, res) => {
         }`;
       await callGraphQL(mutation, { eventId: gameId, s1: String(team1_score), s2: String(team2_score) });
 
+      let statusUpdated = false;
+      try {
+        await markGameComplete(gameId);
+        statusUpdated = true;
+      } catch (statusErr) {
+        // Score push already succeeded - don't fail the whole request over
+        // this secondary step, but do surface it so it's visible.
+        console.error('[api/match-report retry-score-push] markGameComplete error (score was still updated):', statusErr.message);
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, scoreUpdated: true }));
+      res.end(JSON.stringify({ success: true, scoreUpdated: true, statusUpdated }));
     } catch (err) {
       console.error('[api/match-report retry-score-push] Error:', err.message);
       res.writeHead(200, { 'Content-Type': 'application/json' }); // 200, not 500 - this is an expected, retryable outcome, not a server crash
@@ -639,6 +665,7 @@ const server = http.createServer(async (req, res) => {
 
       let scoreUpdated = false;
       let scoreError = null;
+      let statusUpdated = false;
       try {
         const mutation = `
           mutation UpdateScore($eventId: String!, $s1: String!, $s2: String!) {
@@ -649,13 +676,21 @@ const server = http.createServer(async (req, res) => {
           }`;
         await callGraphQL(mutation, { eventId: gameId, s1: String(team1.score), s2: String(team2.score) });
         scoreUpdated = true;
+        try {
+          await markGameComplete(gameId);
+          statusUpdated = true;
+        } catch (statusErr) {
+          // Score push already succeeded - don't fail the whole request
+          // over this secondary step, but do surface it so it's visible.
+          console.error('[api/match-report POST] markGameComplete error (score was still updated):', statusErr.message);
+        }
       } catch (err) {
         console.error('[api/match-report POST] updateScore error:', err.message);
         scoreError = err.message;
       }
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, postgresSaved, scoreUpdated, scoreError }));
+      res.end(JSON.stringify({ success: true, postgresSaved, scoreUpdated, scoreError, statusUpdated }));
     });
     return;
   }
