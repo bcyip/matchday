@@ -742,7 +742,7 @@
       const entry = goals[i];
       if (entry) {
         const idx = reportEntries.indexOf(entry);
-        html += `<div class="report-entry"><span>Goal ${i + 1} ${escapeHtml(teamName)}: ${escapeHtml(entry.name)}${entry.minute != null ? ' — min ' + entry.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
+        html += `<div class="report-entry"><span>Goal ${i + 1} ${escapeHtml(teamName)}: ${escapeHtml(entry.name)}${entry.reason === 'Own Goal' ? ' <span class="muted" style="font-size:11px;">(Own Goal)</span>' : ''}${entry.minute != null ? ' — min ' + entry.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
       } else {
         html += `<div class="option" style="margin-bottom:6px; text-align:center; color:var(--gray);" onclick="openGoalPicker('${escapeJs(teamId)}', '${escapeJs(teamName)}')">Goal ${i + 1} ${escapeHtml(teamName)}: Select player</div>`;
       }
@@ -809,11 +809,31 @@
   }
 
   // Goal slots already know their team - straight to the person list.
+  // teamId/teamName here are always the team the goal counts FOR (matches
+  // the score slot being filled), even for an own goal - only the roster
+  // being shown to pick a scorer from changes (see toggleOwnGoalMode).
   function openGoalPicker(teamId, teamName) {
-    activeReportPicker = { teamId, teamName, eventType: 'Goal', pendingPerson: null, needsTeamChoice: false };
+    const opposing = gameData.teams.find(t => t.id !== teamId);
+    activeReportPicker = {
+      teamId, teamName, eventType: 'Goal', pendingPerson: null, needsTeamChoice: false,
+      rosterTeamId: teamId, isOwnGoal: false,
+      opposingTeamId: opposing ? opposing.id : null, opposingTeamName: opposing ? opposing.name : null,
+    };
     document.getElementById('reportPickerTitle').textContent = teamName + ' — Goal';
     renderReportPickerPersonList();
     document.getElementById('reportPickerOverlay').style.display = 'flex';
+  }
+
+  // Switches the goal picker's roster between the scoring team (normal)
+  // and the opposing team (own goal) without changing which team's score
+  // slot the goal will fill - only who scored it changes.
+  function toggleOwnGoalMode(enable) {
+    activeReportPicker.isOwnGoal = enable;
+    activeReportPicker.rosterTeamId = enable ? activeReportPicker.opposingTeamId : activeReportPicker.teamId;
+    document.getElementById('reportPickerTitle').textContent = enable
+      ? activeReportPicker.teamName + ' — Own Goal (by ' + activeReportPicker.opposingTeamName + ')'
+      : activeReportPicker.teamName + ' — Goal';
+    renderReportPickerPersonList();
   }
 
   // Yellow/Red Card sections are unified across both teams, so the picker's
@@ -859,10 +879,11 @@
   // Only people actually checked in for this team appear here — pulled from
   // checkinState, not the full SportsEngine roster.
   function renderReportPickerPersonList() {
-    const { teamId, needsTeamChoice } = activeReportPicker;
+    const { teamId, needsTeamChoice, eventType, rosterTeamId, isOwnGoal, opposingTeamId, opposingTeamName, teamName } = activeReportPicker;
+    const filterTeamId = rosterTeamId || teamId;
     const listEl = document.getElementById('reportPickerList');
     const people = Object.entries(checkinState)
-      .filter(([key]) => key.startsWith(teamId + ':'))
+      .filter(([key]) => key.startsWith(filterTeamId + ':'))
       .map(([key, val]) => ({ profileId: key.split(':')[1], ...val }))
       .sort((a, b) => {
         const aNum = parseInt(a.jerseyNumber, 10);
@@ -876,12 +897,27 @@
       ? `<a href="#" onclick="renderTeamChoiceForPicker(); return false;" class="back-link">← Back to team</a>`
       : '';
 
+    // Own Goal toggle - only relevant for the Goal picker, and shown at the
+    // top of the list so it's seen before picking a scorer. Toggling swaps
+    // the roster shown below between this team and the opposing team; the
+    // goal still counts toward this team's score slot either way.
+    let ownGoalToggle = '';
+    if (eventType === 'Goal' && opposingTeamId) {
+      ownGoalToggle = isOwnGoal
+        ? `<div class="option" style="background:#FFF7E6; border-color:#E8B84B; margin-bottom:10px;" onclick="toggleOwnGoalMode(false)">
+             <div style="font-weight:700;">← Not an own goal — back to ${escapeHtml(teamName)}'s roster</div>
+           </div>`
+        : `<div class="option" style="background:#FFF7E6; border-color:#E8B84B; margin-bottom:10px;" onclick="toggleOwnGoalMode(true)">
+             <div style="font-weight:700;">⚽ Own Goal — select the ${escapeHtml(opposingTeamName)} player responsible</div>
+           </div>`;
+    }
+
     if (!people.length) {
-      listEl.innerHTML = backLink + '<p class="muted">No one checked in for this team yet — go to Check In first.</p>';
+      listEl.innerHTML = ownGoalToggle + backLink + '<p class="muted">No one checked in for this team yet — go to Check In first.</p>';
       return;
     }
 
-    listEl.innerHTML = backLink + people.map(p => `
+    listEl.innerHTML = ownGoalToggle + backLink + people.map(p => `
       <div class="option" onclick="pickReportPerson('${escapeJs(p.profileId)}')">
         <div style="font-weight:600;">${escapeHtml(p.name)}${p.personType === 'staff' ? ' <span class="pill" style="background:#F1EAD9; color:#7A5B12; padding:2px 8px; border-radius:10px; font-size:10.5px; font-weight:700;">STAFF</span>' : ''}</div>
         ${p.jerseyNumber ? `<div class="muted" style="font-size:12px;">#${escapeHtml(p.jerseyNumber)}</div>` : ''}
@@ -890,8 +926,9 @@
   }
 
   function pickReportPerson(profileId) {
-    const { teamId, eventType } = activeReportPicker;
-    const key = teamId + ':' + profileId;
+    const { teamId, eventType, rosterTeamId } = activeReportPicker;
+    const filterTeamId = rosterTeamId || teamId;
+    const key = filterTeamId + ':' + profileId;
     const person = checkinState[key];
     if (!person) return;
 
@@ -960,7 +997,7 @@
   }
 
   function confirmReportEntry() {
-    const { teamId, teamName, eventType, pendingPerson } = activeReportPicker;
+    const { teamId, teamName, eventType, pendingPerson, isOwnGoal } = activeReportPicker;
     const needsReason = eventType === 'Yellow Card' || eventType === 'Red Card';
 
     let reason = null;
@@ -970,6 +1007,13 @@
         alert('Select a reason before adding.');
         return;
       }
+    }
+    // Own Goal isn't a Yellow/Red Card reason - it's recorded in the same
+    // free-form reason field Goal entries otherwise leave null, purely so
+    // it displays clearly everywhere reason is already shown (goal slots,
+    // the submitted report, the locked view).
+    if (eventType === 'Goal' && isOwnGoal) {
+      reason = 'Own Goal';
     }
 
     let supplementalReport = null;
