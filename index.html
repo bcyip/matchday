@@ -577,6 +577,18 @@
   let reportIncidentReport = null;
   let activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null, needsTeamChoice: false };
 
+  // Secret key from the URL (?adminKey=...) that unlocks adding a Yellow/Red
+  // Card to a report that's already been submitted and locked. Checked only
+  // client-side to decide whether to show the extra buttons - the server
+  // independently re-checks it against ADMIN_EDIT_KEY on every add-entry
+  // request, so this is purely a UI convenience, never the real gate.
+  const ADMIN_KEY = new URLSearchParams(location.search).get('adminKey') || '';
+  // True only while the picker was opened from the locked report view (i.e.
+  // the report is already submitted and we're using the admin add-entry
+  // endpoint), as opposed to the normal pre-submit flow where entries are
+  // just staged in reportEntries[] until Submit is clicked.
+  let adminAddMode = false;
+
   async function loadMatchReportState() {
     const res = await fetch('/api/match-report/' + encodeURIComponent(gameId));
     const data = await res.json();
@@ -643,15 +655,19 @@
       <div style="margin-bottom:16px;">${entryLines('Goal', '⚽')}</div>
 
       <div class="section-label">Yellow Cards</div>
-      <div style="margin-bottom:16px;">${entryLines('Yellow Card', '🟨')}</div>
+      <div id="lockedYellowList" style="margin-bottom:${ADMIN_KEY ? '8' : '16'}px;">${entryLines('Yellow Card', '🟨')}</div>
+      ${ADMIN_KEY ? `<button class="secondary add-event-btn" style="margin-bottom:16px;" onclick="openMisconductPicker('Yellow Card', true)">+ Add Yellow Card</button>` : ''}
 
       <div class="section-label">Red Cards</div>
-      <div${reportIncidentReport ? ' style="margin-bottom:16px;"' : ''}>${entryLines('Red Card', '🟥')}</div>
+      <div id="lockedRedList"${!ADMIN_KEY && !reportIncidentReport ? '' : ' style="margin-bottom:8px;"'}>${entryLines('Red Card', '🟥')}</div>
+      ${ADMIN_KEY ? `<button class="secondary add-event-btn" style="margin-bottom:16px;" onclick="openMisconductPicker('Red Card', true)">+ Add Red Card</button>` : ''}
 
       ${reportIncidentReport ? `
         <div class="section-label">Incident Report</div>
         <div style="white-space:pre-wrap; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; font-size:14px;">${escapeHtml(reportIncidentReport)}</div>
       ` : ''}
+
+      ${ADMIN_KEY ? `<div id="adminAddResult" style="margin-top:8px;"></div>` : ''}
     `;
   }
 
@@ -810,9 +826,10 @@
     btn.textContent = isHidden ? '− Hide Incident Report' : '+ Add Incident Report';
   }
 
-  function openMisconductPicker(eventType) {
+  function openMisconductPicker(eventType, isAdminAdd) {
+    adminAddMode = !!isAdminAdd;
     activeReportPicker = { teamId: null, teamName: null, eventType, pendingPerson: null, needsTeamChoice: true };
-    document.getElementById('reportPickerTitle').textContent = 'Select Team — ' + eventType;
+    document.getElementById('reportPickerTitle').textContent = (adminAddMode ? 'Admin: Add ' : 'Select Team — ') + eventType;
     renderTeamChoiceForPicker();
     document.getElementById('reportPickerOverlay').style.display = 'flex';
   }
@@ -836,6 +853,7 @@
   function closeReportPicker() {
     document.getElementById('reportPickerOverlay').style.display = 'none';
     activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null, needsTeamChoice: false };
+    adminAddMode = false;
   }
 
   // Only people actually checked in for this team appear here — pulled from
@@ -967,10 +985,18 @@
     const minuteVal = document.getElementById('minuteInput').value.trim();
     const minute = minuteVal === '' ? null : parseInt(minuteVal, 10);
 
-    reportEntries.push({
+    const entry = {
       teamId, teamName, personType: pendingPerson.personType, profileId: pendingPerson.profileId,
       name: pendingPerson.name, eventType, minute, reason, supplementalReport,
-    });
+    };
+
+    if (adminAddMode) {
+      closeReportPicker();
+      submitAdminAddEntry(entry);
+      return;
+    }
+
+    reportEntries.push(entry);
 
     // Auto-add a Red Card if this is this player's 2nd Yellow Card in the
     // game - same minute as the 2nd yellow, reason "2nd Caution", no
@@ -994,6 +1020,46 @@
       renderUnifiedReportList(eventType);
     }
     closeReportPicker();
+  }
+
+  // Admin-only: adds a single Yellow/Red Card entry to a report that's
+  // already been submitted, via the adminKey-gated /add-entry endpoint.
+  // Never touches team scores and never re-pushes anything to SportsEngine
+  // - it only appends the one entry (see the server-side comment for why).
+  async function submitAdminAddEntry(entry) {
+    const resultEl = document.getElementById('adminAddResult');
+    if (resultEl) resultEl.innerHTML = '<div class="muted" style="font-size:13px;">Saving...</div>';
+
+    try {
+      const res = await fetch('/api/match-report/' + encodeURIComponent(gameId) + '/add-entry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          adminKey: ADMIN_KEY,
+          teamId: entry.teamId,
+          teamName: entry.teamName,
+          personType: entry.personType,
+          profileId: entry.profileId,
+          name: entry.name,
+          eventType: entry.eventType,
+          minute: entry.minute,
+          reason: entry.reason,
+          supplementalReport: entry.supplementalReport,
+          gameDate: gameData.event.start || null,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Unknown error');
+
+      reportEntries.push(entry);
+      renderLockedReportView();
+      const freshResultEl = document.getElementById('adminAddResult');
+      if (freshResultEl) {
+        freshResultEl.innerHTML = `<div style="color:var(--success); font-size:13px;">Added ${escapeHtml(entry.eventType)} for ${escapeHtml(entry.name)}.${json.suspensionCreated ? ' Suspension record created.' : ''}</div>`;
+      }
+    } catch (e) {
+      if (resultEl) resultEl.innerHTML = '<div class="err">Failed to add entry: ' + escapeHtml(e.message) + '</div>';
+    }
   }
 
   async function submitMatchReport() {

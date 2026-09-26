@@ -27,6 +27,13 @@ const SE_CLIENT_ID = process.env.SE_CLIENT_ID;
 const SE_CLIENT_SECRET = process.env.SE_CLIENT_SECRET;
 const SE_REFRESH_TOKEN = process.env.SE_REFRESH_TOKEN;
 const SE_ORG_ID = process.env.SE_ORG_ID;
+
+// Secret key that unlocks the admin-only "add a Yellow/Red Card to an
+// already-submitted report" endpoint below. This app has no login at all,
+// so a plain ?admin=true-style flag would be trivially guessable and would
+// defeat the whole point of the submit lock. If this isn't set in the
+// environment, the endpoint fails closed (refuses every request).
+const ADMIN_EDIT_KEY = process.env.ADMIN_EDIT_KEY || '';
 const GRAPHQL_ENDPOINT = 'https://api.sportsengine.com/graphql';
 
 const MAX_PLAYERS_CHECKIN = parseInt(process.env.MAX_PLAYERS_CHECKIN || '18', 10);
@@ -552,6 +559,120 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' }); // 200, not 500 - this is an expected, retryable outcome, not a server crash
       res.end(JSON.stringify({ success: true, scoreUpdated: false, scoreError: err.message }));
     }
+    return;
+  }
+
+  // POST /api/match-report/:gameId/add-entry — admin-only escape hatch to
+  // add a single Yellow Card or Red Card entry AFTER a match report has
+  // already been submitted and locked. Match reports are otherwise
+  // permanently locked (see the "already submitted" check in the main
+  // submit handler below) specifically because Red Card entries auto-create
+  // suspension records tied to entry_id - so this endpoint deliberately
+  // does NOT touch team scores, does NOT re-push anything to SportsEngine,
+  // and does NOT allow editing or removing any existing entry. It only ever
+  // appends one new entry (and its suspension, if it's a Red Card) to a
+  // report that was already submitted through the normal flow.
+  //
+  // Gated on ADMIN_EDIT_KEY (see above) rather than any kind of login. If
+  // that env var isn't set, this endpoint refuses every request.
+  const addEntryMatch = url.pathname.match(/^\/api\/match-report\/([^/]+)\/add-entry$/);
+  if (req.method === 'POST' && addEntryMatch) {
+    const gameId = decodeURIComponent(addEntryMatch[1]);
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', async () => {
+      let payload;
+      try {
+        payload = JSON.parse(body);
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+      }
+
+      if (!ADMIN_EDIT_KEY || payload.adminKey !== ADMIN_EDIT_KEY) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Invalid or missing admin key.' }));
+      }
+
+      const { teamId, teamName, personType, profileId, name, eventType, minute, reason, supplementalReport, gameDate } = payload;
+
+      if (!teamId || !teamName || !personType || !profileId || !name || !['Yellow Card', 'Red Card'].includes(eventType)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Entry needs teamId, teamName, personType, profileId, name, and eventType of Yellow Card or Red Card.' }));
+      }
+      if (minute != null && (!Number.isInteger(minute) || minute < 0)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'minute must be a non-negative integer or null.' }));
+      }
+      const VALID_YELLOW_REASONS = ['Unsporting Behavior', 'Delaying the Restart', 'Failure to Respect Distance', 'Persistent Offense', 'Dissent', 'Entering/Leaving Field of Play', "Excessively using the 'review' signal"];
+      const VALID_RED_REASONS = ['2nd Caution', 'Serious Foul Play', 'DOGSO-F', 'DOGSO-H', 'Violent Conduct', 'Abusive Language', 'Biting or Spitting'];
+      if (eventType === 'Yellow Card' && !VALID_YELLOW_REASONS.includes(reason)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Yellow Card entries require a valid reason.' }));
+      }
+      if (eventType === 'Red Card' && !VALID_RED_REASONS.includes(reason)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Red Card entries require a valid reason.' }));
+      }
+      if (eventType === 'Red Card' && reason !== '2nd Caution' && (!supplementalReport || !String(supplementalReport).trim())) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'A supplemental report is required for this red card (not needed for 2nd Caution).' }));
+      }
+      if (eventType === 'Red Card' && !gameDate) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'gameDate is required when adding a Red Card, since it is needed to create the suspension record.' }));
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Report must already exist - this endpoint only ever appends to a
+        // submitted report, it never creates one (that's what the normal
+        // submit endpoint is for).
+        const existing = await client.query('SELECT 1 FROM match_report_scores WHERE game_id = $1', [gameId]);
+        if (existing.rowCount === 0) {
+          await client.query('ROLLBACK');
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'No submitted match report found for this game - use the normal submit flow first.' }));
+        }
+
+        const insertResult = await client.query(
+          `INSERT INTO match_report_entries (game_id, team_id, team_name, person_type, profile_id, name, event_type, minute, reason, supplemental_report, submitted_at, added_via_admin_key)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), true)
+           RETURNING id`,
+          [gameId, teamId, teamName, personType, profileId, name, eventType, minute ?? null, reason, supplementalReport || null]
+        );
+        const entryId = insertResult.rows[0].id;
+
+        let suspensionCreated = false;
+        if (eventType === 'Red Card') {
+          const standardGames = STANDARD_SUSPENSION_GAMES[reason];
+          if (standardGames != null) {
+            await client.query(
+              `INSERT INTO suspensions (entry_id, profile_id, team_id, team_name, player_name, games_suspended, standard_games, issued_from_game_date, status, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $6, $7, 'active', now())`,
+              [entryId, profileId, teamId, teamName, name, standardGames, gameDate]
+            );
+            suspensionCreated = true;
+          } else {
+            console.warn('[match-report add-entry] No standard suspension mapping for reason:', reason, '- no suspension created for entry', entryId);
+          }
+        }
+
+        await client.query('COMMIT');
+        console.log('[match-report add-entry] Admin-added', eventType, 'for', name, '(game', gameId + ')');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, entryId, suspensionCreated }));
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('[api/match-report add-entry] Error:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to save entry: ' + err.message }));
+      } finally {
+        client.release();
+      }
+    });
     return;
   }
 
