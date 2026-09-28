@@ -676,6 +676,187 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /api/match-report/:gameId/admin-edit — admin-only escape hatch to
+  // fully rewrite an already-submitted match report: both scores, the
+  // incident report, crew-changes/officials-present, and the entire set of
+  // Goal/Yellow Card/Red Card entries (add, edit, or remove any of them),
+  // not just append one new card like /add-entry above.
+  //
+  // Because entries can now be removed or changed, any suspension tied to an
+  // entry that's being replaced has to go too — suspensions are keyed off
+  // entry_id, and once the entries are deleted and reinserted the old
+  // entry_ids no longer exist. So this endpoint explicitly deletes
+  // suspensions for this game's existing entries before deleting the entries
+  // themselves, rather than relying on an assumed ON DELETE CASCADE, then
+  // rebuilds both from the submitted payload exactly like the original
+  // submit flow does (including recreating suspensions for any Red Card
+  // entries via STANDARD_SUSPENSION_GAMES).
+  //
+  // Same as /add-entry: requires a report to already exist (this is an edit
+  // tool, not a way to create one), and is gated on ADMIN_EDIT_KEY - if that
+  // env var isn't set, this endpoint refuses every request.
+  const adminEditMatch = url.pathname.match(/^\/api\/match-report\/([^/]+)\/admin-edit$/);
+  if (req.method === 'POST' && adminEditMatch) {
+    const gameId = decodeURIComponent(adminEditMatch[1]);
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', async () => {
+      let payload;
+      try {
+        payload = JSON.parse(body);
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+      }
+
+      if (!ADMIN_EDIT_KEY || payload.adminKey !== ADMIN_EDIT_KEY) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Invalid or missing admin key.' }));
+      }
+
+      const { gameDate, team1, team2, entries, divisionId, gender, incidentReport, crewChangesNeeded, officialsPresent } = payload;
+
+      if (!team1 || !team2 || !Array.isArray(entries)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Missing team1, team2, or entries.' }));
+      }
+      if (entries.some(e => e.eventType === 'Red Card') && !gameDate) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'gameDate is required when the report includes a Red Card, since it is needed to create the suspension record.' }));
+      }
+      for (const t of [team1, team2]) {
+        if (!t.id || !t.name || !Number.isInteger(t.score) || t.score < 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Each team needs id, name, and a non-negative integer score.' }));
+        }
+      }
+      const VALID_EVENT_TYPES = ['Goal', 'Yellow Card', 'Red Card'];
+      const VALID_YELLOW_REASONS = ['Unsporting Behavior', 'Delaying the Restart', 'Failure to Respect Distance', 'Persistent Offense', 'Dissent', 'Entering/Leaving Field of Play', "Excessively using the 'review' signal"];
+      const VALID_RED_REASONS = ['2nd Caution', 'Serious Foul Play', 'DOGSO-F', 'DOGSO-H', 'Violent Conduct', 'Abusive Language', 'Biting or Spitting'];
+      for (const e of entries) {
+        if (!e.teamId || !e.teamName || !e.personType || !e.profileId || !e.name || !VALID_EVENT_TYPES.includes(e.eventType)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Each entry needs teamId, teamName, personType, profileId, name, and a valid eventType.' }));
+        }
+        if (e.minute != null && (!Number.isInteger(e.minute) || e.minute < 0)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'minute must be a non-negative integer or null.' }));
+        }
+        if (e.eventType === 'Yellow Card' && !VALID_YELLOW_REASONS.includes(e.reason)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Yellow Card entries require a valid reason.' }));
+        }
+        if (e.eventType === 'Red Card' && !VALID_RED_REASONS.includes(e.reason)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Red Card entries require a valid reason.' }));
+        }
+        if (e.eventType === 'Red Card' && e.reason !== '2nd Caution' && (!e.supplementalReport || !String(e.supplementalReport).trim())) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'A supplemental report is required for this red card (not needed for 2nd Caution).' }));
+        }
+      }
+
+      const client = await pool.connect();
+      let postgresSaved = false;
+      try {
+        await client.query('BEGIN');
+
+        // Same lock name as the original submit uses, so an admin edit can
+        // never race a (theoretically impossible, since this game is
+        // already submitted) concurrent normal submit, or another
+        // concurrent admin edit of the same game.
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['match-report-submit:' + gameId]);
+
+        const existing = await client.query('SELECT 1 FROM match_report_scores WHERE game_id = $1', [gameId]);
+        if (existing.rowCount === 0) {
+          await client.query('ROLLBACK');
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'No submitted match report found for this game - use the normal submit flow first.' }));
+        }
+
+        // Remove suspensions tied to entries that are about to be deleted,
+        // before deleting the entries themselves - don't rely on the DB
+        // having an ON DELETE CASCADE from suspensions.entry_id.
+        await client.query(
+          `DELETE FROM suspensions WHERE entry_id IN (SELECT id FROM match_report_entries WHERE game_id = $1)`,
+          [gameId]
+        );
+        await client.query('DELETE FROM match_report_entries WHERE game_id = $1', [gameId]);
+
+        await client.query(
+          `UPDATE match_report_scores
+           SET game_date = $2, team1_id = $3, team1_name = $4, team1_score = $5, team2_id = $6, team2_name = $7, team2_score = $8,
+               division_id = $9, gender = $10, incident_report = $11, crew_changes_needed = $12, officials_present = $13,
+               edited_via_admin_key_at = now()
+           WHERE game_id = $1`,
+          [gameId, gameDate || null, team1.id, team1.name, team1.score, team2.id, team2.name, team2.score, divisionId || null, gender || null, incidentReport || null, crewChangesNeeded === true, [1, 2, 3].includes(officialsPresent) ? officialsPresent : null]
+        );
+
+        for (const e of entries) {
+          const insertResult = await client.query(
+            `INSERT INTO match_report_entries (game_id, team_id, team_name, person_type, profile_id, name, event_type, minute, reason, supplemental_report, submitted_at, added_via_admin_key)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), true)
+             RETURNING id`,
+            [gameId, e.teamId, e.teamName, e.personType, e.profileId, e.name, e.eventType, e.minute ?? null, e.reason ?? null, e.supplementalReport ?? null]
+          );
+          const entryId = insertResult.rows[0].id;
+
+          if (e.eventType === 'Red Card') {
+            const standardGames = STANDARD_SUSPENSION_GAMES[e.reason];
+            if (standardGames != null) {
+              await client.query(
+                `INSERT INTO suspensions (entry_id, profile_id, team_id, team_name, player_name, games_suspended, standard_games, issued_from_game_date, status, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $6, $7, 'active', now())`,
+                [entryId, e.profileId, e.teamId, e.teamName, e.name, standardGames, gameDate || null]
+              );
+            } else {
+              console.warn('[match-report admin-edit] No standard suspension mapping for reason:', e.reason, '- no suspension created for entry', entryId);
+            }
+          }
+        }
+
+        await client.query('COMMIT');
+        postgresSaved = true;
+        console.log('[match-report admin-edit] Report for game', gameId, 'was fully rewritten via admin key.');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('[api/match-report admin-edit] Postgres error:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Failed to save edited report: ' + err.message }));
+      } finally {
+        client.release();
+      }
+
+      let scoreUpdated = false;
+      let scoreError = null;
+      let statusUpdated = false;
+      try {
+        const mutation = `
+          mutation UpdateScore($eventId: String!, $s1: String!, $s2: String!) {
+            updateScore(eventId: $eventId, scoreTeam1: $s1, scoreTeam2: $s2) {
+              name
+              eventTeams { name score }
+            }
+          }`;
+        await callGraphQL(mutation, { eventId: gameId, s1: String(team1.score), s2: String(team2.score) });
+        scoreUpdated = true;
+        try {
+          await markGameComplete(gameId);
+          statusUpdated = true;
+        } catch (statusErr) {
+          console.error('[api/match-report admin-edit] markGameComplete error (score was still updated):', statusErr.message);
+        }
+      } catch (err) {
+        console.error('[api/match-report admin-edit] updateScore error:', err.message);
+        scoreError = err.message;
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, postgresSaved, scoreUpdated, scoreError, statusUpdated }));
+    });
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/match-report') {
     let body = '';
     req.on('data', (chunk) => (body += chunk));

@@ -575,6 +575,8 @@
   let reportEntries = []; // {teamId, teamName, personType, profileId, name, eventType, minute, reason}
   let reportAlreadySubmitted = false;
   let reportIncidentReport = null;
+  let reportCrewChangesNeeded = false;
+  let reportOfficialsPresent = 3;
   let activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null, needsTeamChoice: false };
 
   // Secret key from the URL (?adminKey=...) that unlocks adding a Yellow/Red
@@ -588,16 +590,27 @@
   // endpoint), as opposed to the normal pre-submit flow where entries are
   // just staged in reportEntries[] until Submit is clicked.
   let adminAddMode = false;
+  // True only while editing an already-submitted report through the "Edit
+  // Full Report" admin escape hatch (enterAdminEditMode below) - as opposed
+  // to adminAddMode, which only appends a single card. While this is true,
+  // the (otherwise locked) editable form is shown pre-filled with the
+  // existing report, and Submit posts to the admin-edit endpoint instead of
+  // the normal (one-time-only) submit endpoint.
+  let adminEditMode = false;
 
   async function loadMatchReportState() {
     const res = await fetch('/api/match-report/' + encodeURIComponent(gameId));
     const data = await res.json();
     reportScores = {};
     reportIncidentReport = null;
+    reportCrewChangesNeeded = false;
+    reportOfficialsPresent = 3;
     if (data.scores) {
       reportScores[data.scores.team1_id] = data.scores.team1_score;
       reportScores[data.scores.team2_id] = data.scores.team2_score;
       reportIncidentReport = data.scores.incident_report || null;
+      reportCrewChangesNeeded = !!data.scores.crew_changes_needed;
+      reportOfficialsPresent = [1, 2, 3].includes(data.scores.officials_present) ? data.scores.officials_present : 3;
     }
     reportEntries = (data.entries || []).map(e => ({
       teamId: e.team_id, teamName: e.team_name, personType: e.person_type,
@@ -605,7 +618,8 @@
       reason: e.reason, supplementalReport: e.supplemental_report,
     }));
     // Match reports can never be resubmitted once saved - if scores already
-    // exist, this game's report is permanently locked to read-only.
+    // exist, this game's report is permanently locked to read-only (unless
+    // an admin explicitly enters Edit Full Report mode, see below).
     reportAlreadySubmitted = !!data.scores;
   }
 
@@ -646,6 +660,7 @@
       <div class="card" style="background:#F4F9FD; border-color:var(--blue); margin-bottom:16px;">
         <strong>This match report has already been submitted and cannot be changed.</strong>
         <p class="muted" style="margin:6px 0 0;">Match reports are locked after submission to keep suspension records accurate. Contact an administrator if a correction is genuinely needed.</p>
+        ${ADMIN_KEY ? `<button class="secondary" style="margin-top:10px;" onclick="enterAdminEditMode()">✏️ Edit Full Report</button>` : ''}
       </div>
 
       <div class="section-label" style="margin-top:0;">Final Score</div>
@@ -669,6 +684,42 @@
 
       ${ADMIN_KEY ? `<div id="adminAddResult" style="margin-top:8px;"></div>` : ''}
     `;
+  }
+
+  // Admin-only escape hatch: switches from the locked, read-only report view
+  // into the normal editable form, pre-filled with everything already on
+  // file for this report (scores, every entry, incident report, crew
+  // changes / officials present) - so the admin is editing the real report,
+  // not starting from scratch. Submitting from here (see submitMatchReport)
+  // posts to the admin-edit endpoint with the admin key instead of the
+  // normal one-time-only submit endpoint.
+  function enterAdminEditMode() {
+    if (!ADMIN_KEY) return;
+    adminEditMode = true;
+
+    document.getElementById('reportLockedView').style.display = 'none';
+    document.getElementById('reportEditableForm').style.display = 'block';
+    renderScoreAndGoals();
+    renderUnifiedReportList('Yellow Card');
+    renderUnifiedReportList('Red Card');
+
+    const incidentText = document.getElementById('incidentReportText');
+    incidentText.value = reportIncidentReport || '';
+    if (reportIncidentReport) {
+      document.getElementById('incidentReportSection').style.display = 'block';
+      document.getElementById('incidentReportToggleBtn').textContent = '− Hide Incident Report';
+    }
+
+    document.querySelector(`input[name="crewChangesNeeded"][value="${reportCrewChangesNeeded ? 'yes' : 'no'}"]`).checked = true;
+    document.querySelector(`input[name="officialsPresent"][value="${reportOfficialsPresent}"]`).checked = true;
+
+    const btn = document.getElementById('submitReportBtn');
+    btn.textContent = 'Save Edited Report';
+    btn.disabled = false;
+    btn.onclick = submitMatchReport;
+
+    const resultEl = document.getElementById('reportSubmitResult');
+    resultEl.innerHTML = '<div style="color:var(--gray); font-size:13px;">Admin edit mode: this will overwrite the already-submitted report, including its entries and suspensions for any Red Cards.</div>';
   }
 
   // Top section: score input + goal slots together, for BOTH teams at once
@@ -1111,14 +1162,19 @@
     resultEl.innerHTML = '';
     const btn = document.getElementById('submitReportBtn');
 
-    const minPlayersRequired = config.minPlayersRequired;
-    for (const team of gameData.teams) {
-      const playerCount = Object.entries(checkinState).filter(
-        ([key, val]) => key.startsWith(team.id + ':') && val.personType === 'player'
-      ).length;
-      if (playerCount < minPlayersRequired) {
-        resultEl.innerHTML = `<div class="err">${escapeHtml(team.name)}: only ${playerCount} of the required ${minPlayersRequired} players are checked in. Complete Check-In before submitting.</div>`;
-        return;
+    // The minimum-players-checked-in check exists to catch a report being
+    // submitted before check-in was actually completed - not relevant when
+    // an admin is correcting an already-submitted report after the fact.
+    if (!adminEditMode) {
+      const minPlayersRequired = config.minPlayersRequired;
+      for (const team of gameData.teams) {
+        const playerCount = Object.entries(checkinState).filter(
+          ([key, val]) => key.startsWith(team.id + ':') && val.personType === 'player'
+        ).length;
+        if (playerCount < minPlayersRequired) {
+          resultEl.innerHTML = `<div class="err">${escapeHtml(team.name)}: only ${playerCount} of the required ${minPlayersRequired} players are checked in. Complete Check-In before submitting.</div>`;
+          return;
+        }
       }
     }
 
@@ -1154,7 +1210,7 @@
     }
 
     btn.disabled = true;
-    btn.textContent = 'Submitting...';
+    btn.textContent = adminEditMode ? 'Saving...' : 'Submitting...';
 
     const payload = {
       gameId,
@@ -1171,9 +1227,13 @@
       crewChangesNeeded: document.querySelector('input[name="crewChangesNeeded"]:checked').value === 'yes',
       officialsPresent: parseInt(document.querySelector('input[name="officialsPresent"]:checked').value, 10),
     };
+    // Admin edits of an already-submitted report go through a dedicated
+    // endpoint gated on the admin key - the normal endpoint always rejects
+    // this (a report can never be resubmitted through it).
+    if (adminEditMode) payload.adminKey = ADMIN_KEY;
 
     try {
-      const res = await fetch('/api/match-report', {
+      const res = await fetch(adminEditMode ? '/api/match-report/' + encodeURIComponent(gameId) + '/admin-edit' : '/api/match-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1182,10 +1242,10 @@
       if (!res.ok) throw new Error(json.error || 'Unknown error');
 
       if (json.scoreUpdated) {
-        resultEl.innerHTML = '<div style="color:var(--success); font-size:13px;">Match report saved, and the score was pushed to SportsEngine successfully.</div>';
+        resultEl.innerHTML = `<div style="color:var(--success); font-size:13px;">${adminEditMode ? 'Edited report saved' : 'Match report saved'}, and the score was pushed to SportsEngine successfully.</div>`;
         btn.style.display = 'none'; // report is fully done - nothing left to retry, no button needed
       } else {
-        resultEl.innerHTML = '<div class="err">Report saved successfully — your entries and score are safe. Only the sync to SportsEngine\'s own scoreboard failed: ' +
+        resultEl.innerHTML = `<div class="err">Report saved successfully — your entries and score are safe. Only the sync to SportsEngine's own scoreboard failed: ` +
           escapeHtml(json.scoreError || 'unknown error') + '</div>';
         // Same button, not a new one - relabel it to retry ONLY the score
         // push. A normal resubmit would always be rejected at this point
@@ -1194,12 +1254,13 @@
         btn.onclick = retryScorePush;
       }
     } catch (e) {
-      resultEl.innerHTML = '<div class="err">Submit failed: ' + escapeHtml(e.message) + '</div>';
+      resultEl.innerHTML = '<div class="err">' + (adminEditMode ? 'Save failed: ' : 'Submit failed: ') + escapeHtml(e.message) + '</div>';
     } finally {
       if (btn.style.display !== 'none') {
         btn.disabled = false;
         // Don't stomp the "Retry Score Push" label if that's what was just set above.
         if (btn.textContent === 'Submitting...') btn.textContent = 'Submit Match Report';
+        else if (btn.textContent === 'Saving...') btn.textContent = 'Save Edited Report';
       }
     }
   }
