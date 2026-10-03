@@ -648,12 +648,21 @@
       `<div><strong>${escapeHtml(team.name)}</strong>: ${reportScores[team.id] != null ? reportScores[team.id] : '—'}</div>`
     ).join('');
 
+    // Red Card entries show their full supplemental report text here too
+    // (previously only visible on request, now displayed so the report is
+    // readable without a separate step once it's been submitted).
     const entryLines = (eventType, emoji) => {
       const items = reportEntries.filter(e => e.eventType === eventType);
       if (!items.length) return '<div class="muted" style="font-size:13px;">None recorded.</div>';
-      return items.map(e =>
-        `<div class="report-entry"><span>${emoji} <strong>${escapeHtml(e.teamName)}:</strong> ${escapeHtml(e.name)}${e.reason ? ' — ' + escapeHtml(e.reason) : ''}${e.minute != null ? ' — min ' + e.minute : ''}</span></div>`
-      ).join('');
+      return items.map(e => {
+        const reportBlock = e.supplementalReport
+          ? `<div class="muted" style="font-size:12px; margin-top:4px; white-space:pre-wrap;">📄 ${escapeHtml(e.supplementalReport)}</div>`
+          : '';
+        return `<div class="report-entry" style="${reportBlock ? 'flex-direction:column; align-items:stretch;' : ''}">
+          <span>${emoji} <strong>${escapeHtml(e.teamName)}:</strong> ${escapeHtml(e.name)}${e.reason ? ' — ' + escapeHtml(e.reason) : ''}${e.minute != null ? ' — min ' + e.minute : ''}</span>
+          ${reportBlock}
+        </div>`;
+      }).join('');
     };
 
     container.innerHTML = `
@@ -802,7 +811,12 @@
   }
 
   // Yellow/Red Card lists are unified across both teams (not split per
-  // team) - each entry shows which team it belongs to.
+  // team) - each entry shows which team it belongs to. Red Card entries
+  // also show their full supplemental report text (not just a "report on
+  // file" badge) and get an Edit button - including the auto-generated 2nd
+  // Caution one, which now requires a report of its own too (see
+  // confirmReportEntry) - so it can be corrected in place without removing
+  // and re-adding the whole entry.
   function renderUnifiedReportList(eventType) {
     const el = document.getElementById('report-' + eventType);
     if (!el) return;
@@ -810,13 +824,46 @@
     el.innerHTML = items.length
       ? items.map(e => {
           const idx = reportEntries.indexOf(e);
-          const isAutoRed = e.eventType === 'Red Card' && e.reason === '2nd Caution';
-          const action = isAutoRed
+          const isRedCard = e.eventType === 'Red Card';
+          const isAutoRed = isRedCard && e.reason === '2nd Caution';
+          const removeBtn = isAutoRed
             ? `<span class="muted" style="font-size:11px;">(auto)</span>`
             : `<button onclick="removeReportEntry(${idx})">✕</button>`;
-          return `<div class="report-entry"><span><strong>${escapeHtml(e.teamName)}:</strong> ${escapeHtml(e.name)}${e.reason ? ' — ' + escapeHtml(e.reason) : ''}${e.minute != null ? ' — min ' + e.minute : ''}${e.supplementalReport ? ' <span class="muted" style="font-size:11px;">📄 report on file</span>' : ''}</span>${action}</div>`;
+          const editBtn = isRedCard
+            ? `<button style="padding:6px 10px; font-size:12px; background:transparent; color:var(--navy); border:1px solid var(--border); border-radius:5px; min-height:32px;" onclick="editReportEntry(${idx})">✎ Edit</button>`
+            : '';
+          const reportBlock = isRedCard
+            ? (e.supplementalReport
+                ? `<div class="muted" style="font-size:12px; margin-top:4px; white-space:pre-wrap;">📄 ${escapeHtml(e.supplementalReport)}</div>`
+                : `<div style="font-size:12px; margin-top:4px; color:var(--danger);">⚠ Report required - use Edit to add it</div>`)
+            : '';
+          return `<div class="report-entry" style="${isRedCard ? 'flex-direction:column; align-items:stretch;' : ''}">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <span><strong>${escapeHtml(e.teamName)}:</strong> ${escapeHtml(e.name)}${e.reason ? ' — ' + escapeHtml(e.reason) : ''}${e.minute != null ? ' — min ' + e.minute : ''}</span>
+              <span style="display:flex; gap:4px; align-items:center;">${editBtn}${removeBtn}</span>
+            </div>
+            ${reportBlock}
+          </div>`;
         }).join('')
       : '<div class="muted" style="font-size:12px;">None added yet.</div>';
+  }
+
+  // Reopens the picker for an already-staged Yellow/Red Card entry so its
+  // minute, reason (if manually selectable), and supplemental report can
+  // be changed in place, rather than having to remove and re-add it.
+  // Used both for a normal manually-added red card and for editing the
+  // auto-generated 2nd Caution one (whose reason is fixed either way).
+  function editReportEntry(idx) {
+    const entry = reportEntries[idx];
+    if (!entry) return;
+    activeReportPicker = {
+      teamId: entry.teamId, teamName: entry.teamName, eventType: entry.eventType,
+      pendingPerson: { profileId: entry.profileId, name: entry.name, personType: entry.personType },
+      needsTeamChoice: false, editingIdx: idx,
+    };
+    document.getElementById('reportPickerTitle').textContent = 'Edit ' + entry.eventType + ' — ' + entry.teamName;
+    document.getElementById('reportPickerOverlay').style.display = 'flex';
+    renderMinutePicker();
   }
 
   function removeReportEntry(idx) {
@@ -1001,46 +1048,60 @@
 
   function renderMinutePicker() {
     const listEl = document.getElementById('reportPickerList');
-    const { eventType, pendingPerson } = activeReportPicker;
+    const { eventType, pendingPerson, editingIdx } = activeReportPicker;
+    const existing = editingIdx != null ? reportEntries[editingIdx] : null;
     const needsReason = eventType === 'Yellow Card' || eventType === 'Red Card';
     const isRedCard = eventType === 'Red Card';
+    // The auto-generated 2nd Caution red card's reason is fixed - it's
+    // never offered as a manually-selectable option (see RED_CARD_REASONS)
+    // and isn't editable even when editing that entry's minute/report.
+    const isAutoRed = isRedCard && existing && existing.reason === '2nd Caution';
     const reasons = eventType === 'Yellow Card' ? YELLOW_CARD_REASONS : RED_CARD_REASONS;
 
-    const reasonHtml = needsReason ? `
+    const reasonHtml = isAutoRed ? `
+      <div class="section-label" style="margin-top:0;">Reason</div>
+      <p class="muted" style="margin:0 0 10px;">2nd Caution (automatic - not editable)</p>
+    ` : needsReason ? `
       <div class="section-label" style="margin-top:0;">Reason</div>
       <select id="reasonSelect" ${isRedCard ? 'onchange="onRedCardReasonChange()"' : ''} style="width:100%; padding:12px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px; min-height:46px; font-size:16px;">
         <option value="">-- Select Reason --</option>
-        ${reasons.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('')}
+        ${reasons.map(r => `<option value="${escapeHtml(r)}" ${existing && existing.reason === r ? 'selected' : ''}>${escapeHtml(r)}</option>`).join('')}
       </select>
     ` : '';
 
-    // Supplemental report is required for every manually-selected Red Card
-    // reason (2nd Caution isn't a selectable option here at all - it's only
-    // ever set by the auto-generation logic, which never needs a report).
+    // A supplemental report is required for every Red Card now, including
+    // the auto-generated 2nd Caution one - never exempted anymore.
     const supplementalHtml = isRedCard ? `<div id="supplementalReportSection" style="margin-bottom:10px;"></div>` : '';
 
+    const backHtml = editingIdx != null
+      ? `<a href="#" onclick="closeReportPicker(); return false;" class="back-link">← Cancel</a>`
+      : `<a href="#" onclick="renderReportPickerPersonList(); return false;" class="back-link">← Back to list</a>`;
+
     listEl.innerHTML = `
-      <a href="#" onclick="renderReportPickerPersonList(); return false;" class="back-link">← Back to list</a>
+      ${backHtml}
       <p class="muted" style="margin-bottom:10px;"><strong>${escapeHtml(pendingPerson.name)}</strong></p>
       ${reasonHtml}
-      <input type="number" inputmode="numeric" min="0" id="minuteInput" placeholder="Minute" style="width:100%; padding:12px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px; min-height:46px; font-size:16px;" />
+      <input type="number" inputmode="numeric" min="0" id="minuteInput" placeholder="Minute" value="${existing && existing.minute != null ? existing.minute : ''}" style="width:100%; padding:12px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px; min-height:46px; font-size:16px;" />
       ${supplementalHtml}
-      <button style="width:100%;" onclick="confirmReportEntry()">Add</button>
+      <button style="width:100%;" onclick="confirmReportEntry()">${editingIdx != null ? 'Save' : 'Add'}</button>
     `;
 
-    if (isRedCard) onRedCardReasonChange();
+    if (isRedCard) onRedCardReasonChange(isAutoRed);
   }
 
-  function onRedCardReasonChange() {
+  function onRedCardReasonChange(forceReasonPresent) {
     const reasonEl = document.getElementById('reasonSelect');
     const section = document.getElementById('supplementalReportSection');
-    if (!reasonEl || !section) return;
-    const reason = reasonEl.value;
+    if (!section) return;
+    const { editingIdx } = activeReportPicker;
+    const existing = editingIdx != null ? reportEntries[editingIdx] : null;
+    const reason = forceReasonPresent ? '2nd Caution' : (reasonEl ? reasonEl.value : '');
 
     if (reason) {
+      const existingText = existing ? escapeHtml(existing.supplementalReport || '') : '';
       section.innerHTML = `
         <div class="section-label" style="margin-top:0;">Supplemental Report</div>
-        <textarea id="supplementalReportInput" placeholder="Describe the incident..." style="width:100%; box-sizing:border-box; min-height:90px; padding:10px; border:1px solid var(--border); border-radius:8px; font-size:15px; font-family:inherit;"></textarea>
+        <textarea id="supplementalReportInput" placeholder="Describe the incident..." style="width:100%; box-sizing:border-box; min-height:90px; padding:10px; border:1px solid var(--border); border-radius:8px; font-size:15px; font-family:inherit;">${existingText}</textarea>
       `;
     } else {
       section.innerHTML = '<p class="muted" style="font-size:12px;">Select a reason above.</p>';
@@ -1048,11 +1109,15 @@
   }
 
   function confirmReportEntry() {
-    const { teamId, teamName, eventType, pendingPerson, isOwnGoal } = activeReportPicker;
+    const { teamId, teamName, eventType, pendingPerson, isOwnGoal, editingIdx } = activeReportPicker;
+    const existing = editingIdx != null ? reportEntries[editingIdx] : null;
+    const isAutoRed = eventType === 'Red Card' && existing && existing.reason === '2nd Caution';
     const needsReason = eventType === 'Yellow Card' || eventType === 'Red Card';
 
     let reason = null;
-    if (needsReason) {
+    if (isAutoRed) {
+      reason = '2nd Caution'; // fixed, never editable - see renderMinutePicker
+    } else if (needsReason) {
       reason = document.getElementById('reasonSelect').value;
       if (!reason) {
         alert('Select a reason before adding.');
@@ -1067,8 +1132,10 @@
       reason = 'Own Goal';
     }
 
+    // A supplemental report is required for every Red Card now, including
+    // the auto-generated 2nd Caution one - no exemption anymore.
     let supplementalReport = null;
-    if (eventType === 'Red Card' && reason !== '2nd Caution') {
+    if (eventType === 'Red Card') {
       const textareaEl = document.getElementById('supplementalReportInput');
       supplementalReport = textareaEl ? textareaEl.value.trim() : '';
       if (!supplementalReport) {
@@ -1079,6 +1146,16 @@
 
     const minuteVal = document.getElementById('minuteInput').value.trim();
     const minute = minuteVal === '' ? null : parseInt(minuteVal, 10);
+
+    if (editingIdx != null) {
+      // Editing an already-staged entry in place, rather than removing and
+      // re-adding it - same person/team/event type throughout, only the
+      // minute, reason (when manually selectable), and report can change.
+      reportEntries[editingIdx] = { ...existing, minute, reason, supplementalReport };
+      renderUnifiedReportList(eventType);
+      closeReportPicker();
+      return;
+    }
 
     const entry = {
       teamId, teamName, personType: pendingPerson.personType, profileId: pendingPerson.profileId,
@@ -1094,8 +1171,12 @@
     reportEntries.push(entry);
 
     // Auto-add a Red Card if this is this player's 2nd Yellow Card in the
-    // game - same minute as the 2nd yellow, reason "2nd Caution", no
-    // supplemental report needed.
+    // game - same minute as the 2nd yellow, reason "2nd Caution". This
+    // also now requires its own supplemental report (previously exempted),
+    // so as soon as it's added, immediately reopen it for editing to
+    // collect that report, rather than leaving it to be caught only at
+    // Submit time.
+    let autoRedIdx = null;
     if (eventType === 'Yellow Card') {
       const yellowsForThisPlayer = reportEntries.filter(e =>
         e.eventType === 'Yellow Card' && e.profileId === pendingPerson.profileId && e.teamId === teamId
@@ -1105,6 +1186,7 @@
           teamId, teamName, personType: pendingPerson.personType, profileId: pendingPerson.profileId,
           name: pendingPerson.name, eventType: 'Red Card', minute, reason: '2nd Caution', supplementalReport: null,
         });
+        autoRedIdx = reportEntries.length - 1;
         renderUnifiedReportList('Red Card');
       }
     }
@@ -1115,6 +1197,10 @@
       renderUnifiedReportList(eventType);
     }
     closeReportPicker();
+
+    if (autoRedIdx != null) {
+      editReportEntry(autoRedIdx);
+    }
   }
 
   // Admin-only: adds a single Yellow/Red Card entry to a report that's
@@ -1198,6 +1284,17 @@
           (goalCount < score ? 'Add the missing goal scorer(s) before submitting.' : 'Remove the extra goal entry/entries before submitting.') + '</div>';
         return;
       }
+    }
+
+    // Every Red Card - including an auto-generated 2nd Caution one - must
+    // have its supplemental report filled in before submitting. Normally
+    // caught immediately when the card is added/auto-generated (see
+    // confirmReportEntry), but this is the hard backstop in case one is
+    // ever left incomplete right up to Submit.
+    const missingReportEntry = reportEntries.find(e => e.eventType === 'Red Card' && !e.supplementalReport);
+    if (missingReportEntry) {
+      resultEl.innerHTML = `<div class="err">${escapeHtml(missingReportEntry.name)} (${escapeHtml(missingReportEntry.teamName)}): a supplemental report is required for this red card before submitting. Use the "✎ Edit" button on that entry above to add it.</div>`;
+      return;
     }
 
     // If neither team has any Yellow Card or Red Card entries at all,

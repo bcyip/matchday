@@ -614,9 +614,12 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ error: 'Red Card entries require a valid reason.' }));
       }
-      if (eventType === 'Red Card' && reason !== '2nd Caution' && (!supplementalReport || !String(supplementalReport).trim())) {
+      // A supplemental report is required for every Red Card, including an
+      // auto-generated 2nd Caution one - previously exempted, but now the
+      // referee must document why the 2nd Yellow was issued too.
+      if (eventType === 'Red Card' && (!supplementalReport || !String(supplementalReport).trim())) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'A supplemental report is required for this red card (not needed for 2nd Caution).' }));
+        return res.end(JSON.stringify({ error: 'A supplemental report is required for this red card.' }));
       }
       if (eventType === 'Red Card' && !gameDate) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -750,9 +753,11 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: 'Red Card entries require a valid reason.' }));
         }
-        if (e.eventType === 'Red Card' && e.reason !== '2nd Caution' && (!e.supplementalReport || !String(e.supplementalReport).trim())) {
+        // Required for every Red Card, including an auto-generated 2nd
+        // Caution one - see the matching comment in the add-entry endpoint.
+        if (e.eventType === 'Red Card' && (!e.supplementalReport || !String(e.supplementalReport).trim())) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: 'A supplemental report is required for this red card (not needed for 2nd Caution).' }));
+          return res.end(JSON.stringify({ error: 'A supplemental report is required for this red card.' }));
         }
       }
 
@@ -905,9 +910,11 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: 'Red Card entries require a valid reason.' }));
         }
-        if (e.eventType === 'Red Card' && e.reason !== '2nd Caution' && (!e.supplementalReport || !String(e.supplementalReport).trim())) {
+        // Required for every Red Card, including an auto-generated 2nd
+        // Caution one - see the matching comment in the add-entry endpoint.
+        if (e.eventType === 'Red Card' && (!e.supplementalReport || !String(e.supplementalReport).trim())) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: 'A supplemental report is required for this red card (not needed for 2nd Caution).' }));
+          return res.end(JSON.stringify({ error: 'A supplemental report is required for this red card.' }));
         }
       }
 
