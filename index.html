@@ -86,6 +86,24 @@
       <button onclick="showCheckIn()">Check In</button>
       <button id="matchReportBtn" class="secondary" disabled onclick="showMatchReport()">Submit Match Report</button>
     </div>
+
+    <!-- Already-flagged status - shown in place of the Mark Abandoned
+         button once this game has a forfeit_flags row (whether a referee
+         marked it abandoned here, or admin marked it forfeit/postponed). -->
+    <div id="abandonedStatusBox" style="display:none; margin-top:16px; padding:12px; background:#FBEAE8; border:1px solid var(--danger); border-radius:8px; font-size:13px;"></div>
+
+    <div id="abandonSection" style="display:none; margin-top:18px; text-align:center;">
+      <button id="markAbandonedBtn" class="secondary" style="font-size:12.5px; padding:9px 16px; min-height:38px; color:var(--danger); border-color:var(--danger);" onclick="toggleAbandonForm()">⚠ Mark Game Abandoned</button>
+      <div id="abandonForm" style="display:none; margin-top:12px; text-align:left;">
+        <p class="muted" style="margin-top:0;">Arrived, but the game was called off for some reason (weather, field conditions, a team no-show, etc.)? Describe what happened below. This will NOT create a match report and will NOT count toward any player's suspension being served.</p>
+        <textarea id="abandonNotesInput" placeholder="Describe what happened..." style="width:100%; box-sizing:border-box; min-height:100px; padding:10px; border:1px solid var(--border); border-radius:8px; font-size:15px; font-family:inherit;" oninput="updateAbandonSubmitState()"></textarea>
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button id="submitAbandonedBtn" disabled style="flex:1; background:var(--danger);" onclick="submitAbandonedMatch()">Submit Abandoned Match</button>
+          <button type="button" class="secondary" style="flex:0 0 auto;" onclick="toggleAbandonForm(false)">Cancel</button>
+        </div>
+        <div id="abandonResult" style="margin-top:8px; font-size:13px;"></div>
+      </div>
+    </div>
   </div>
 
   <!-- CHECK-IN VIEW -->
@@ -251,6 +269,7 @@
       document.getElementById('gameSubtitle').innerHTML = [startStr, genderStr, gameData.event.location && gameData.event.location.name].filter(Boolean).map(escapeHtml).join('<br>');
 
       updateMatchReportGate();
+      renderAbandonUi();
     } catch (e) {
       showError('Failed to load: ' + e.message);
     }
@@ -300,6 +319,82 @@
       if (team2Count < MIN_PLAYERS_CHECKED_IN) parts.push(`${escapeHtml(team2Name)} (${team2Count}/${MIN_PLAYERS_CHECKED_IN})`);
       noteEl.innerHTML = `Both teams need at least ${MIN_PLAYERS_CHECKED_IN} players checked in before Match Report unlocks. Still needed: ${parts.join(' and ')}.`;
       noteEl.style.display = 'block';
+    }
+  }
+
+  const FORFEIT_REASON_LABELS = { forfeit: 'Forfeit', postponed: 'Postponed', abandoned: 'Abandoned' };
+
+  // Shows either the already-flagged status (if this game has a
+  // forfeit_flags row, however it got one) or the Mark Abandoned button -
+  // never both. Check In / Submit Match Report stay as Check In / Match
+  // Report normally decide, EXCEPT once this game is flagged - at that
+  // point the game isn't being played, so both are disabled regardless of
+  // check-in progress.
+  function renderAbandonUi() {
+    const statusBox = document.getElementById('abandonedStatusBox');
+    const abandonSection = document.getElementById('abandonSection');
+
+    if (reportForfeitFlag) {
+      const label = FORFEIT_REASON_LABELS[reportForfeitFlag.reason] || reportForfeitFlag.reason;
+      statusBox.innerHTML = `
+        <strong>This game has been marked ${escapeHtml(label)}.</strong>
+        ${reportForfeitFlag.notes ? `<div style="margin-top:4px; white-space:pre-wrap;">${escapeHtml(reportForfeitFlag.notes)}</div>` : ''}
+        <div class="muted" style="margin-top:4px;">Check-In and Match Report are disabled for this game. Contact an administrator if this was marked in error.</div>
+      `;
+      statusBox.style.display = 'block';
+      abandonSection.style.display = 'none';
+
+      document.getElementById('matchReportBtn').disabled = true;
+      const checkInBtn = document.querySelector('.landing-buttons button:not(.secondary)');
+      if (checkInBtn) checkInBtn.disabled = true;
+      document.getElementById('matchReportGateNote').style.display = 'none';
+      return;
+    }
+
+    statusBox.style.display = 'none';
+    abandonSection.style.display = 'block';
+  }
+
+  function toggleAbandonForm(show) {
+    const form = document.getElementById('abandonForm');
+    const isShown = show != null ? show : form.style.display === 'none';
+    form.style.display = isShown ? 'block' : 'none';
+    if (isShown) {
+      document.getElementById('abandonNotesInput').focus();
+    } else {
+      document.getElementById('abandonNotesInput').value = '';
+      document.getElementById('abandonResult').innerHTML = '';
+      updateAbandonSubmitState();
+    }
+  }
+
+  function updateAbandonSubmitState() {
+    const notes = document.getElementById('abandonNotesInput').value.trim();
+    document.getElementById('submitAbandonedBtn').disabled = !notes;
+  }
+
+  async function submitAbandonedMatch() {
+    const notes = document.getElementById('abandonNotesInput').value.trim();
+    if (!notes) return; // button is disabled without notes, but guard anyway
+    const btn = document.getElementById('submitAbandonedBtn');
+    const resultEl = document.getElementById('abandonResult');
+    btn.disabled = true;
+    btn.textContent = 'Submitting...';
+    resultEl.innerHTML = '';
+    try {
+      const res = await fetch('/api/match-report/' + encodeURIComponent(gameId) + '/mark-abandoned', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Unknown error');
+      reportForfeitFlag = { reason: 'abandoned', notes };
+      renderAbandonUi();
+    } catch (e) {
+      resultEl.innerHTML = '<div class="err">' + escapeHtml(e.message) + '</div>';
+      btn.disabled = false;
+      btn.textContent = 'Submit Abandoned Match';
     }
   }
 
@@ -574,6 +669,10 @@
   let reportScores = {}; // teamId -> score
   let reportEntries = []; // {teamId, teamName, personType, profileId, name, eventType, minute, reason}
   let reportAlreadySubmitted = false;
+  // { reason: 'forfeit'|'postponed'|'abandoned', notes } once this game has
+  // been flagged as not played, by either a referee (mark-abandoned, below)
+  // or an admin (forfeit/postponed, from the admin console) - null otherwise.
+  let reportForfeitFlag = null;
   let reportIncidentReport = null;
   let reportCrewChangesNeeded = false;
   let reportOfficialsPresent = 3;
@@ -621,6 +720,7 @@
     // exist, this game's report is permanently locked to read-only (unless
     // an admin explicitly enters Edit Full Report mode, see below).
     reportAlreadySubmitted = !!data.scores;
+    reportForfeitFlag = data.forfeitFlag || null;
   }
 
   function showMatchReport() {

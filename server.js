@@ -503,13 +503,75 @@ const server = http.createServer(async (req, res) => {
         'SELECT team_id, team_name, person_type, profile_id, name, event_type, minute, reason, supplemental_report FROM match_report_entries WHERE game_id = $1 ORDER BY minute NULLS LAST',
         [gameId]
       );
+      // Whether this game has already been marked Forfeit/Postponed/
+      // Abandoned (admin console owns forfeit_flags too - this is read-only
+      // here) - lets the landing page show "already marked abandoned"
+      // instead of the mark-abandoned button on reload, and blocks
+      // mark-abandoned below once a real report exists.
+      const forfeitResult = await pool.query('SELECT reason, notes FROM forfeit_flags WHERE game_id = $1', [gameId]);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ scores: scoresResult.rows[0] || null, entries: entriesResult.rows }));
+      res.end(JSON.stringify({
+        scores: scoresResult.rows[0] || null,
+        entries: entriesResult.rows,
+        forfeitFlag: forfeitResult.rows[0] || null,
+      }));
     } catch (err) {
       console.error('[api/match-report GET] Error:', err.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     }
+    return;
+  }
+
+  // POST /api/match-report/:gameId/mark-abandoned — referee-facing (no
+  // admin key required, unlike add-entry/admin-edit) way to report that the
+  // game was called off after they arrived, for whatever reason, WITHOUT
+  // creating a match report or counting toward any suspended player's
+  // games served. This only ever writes to forfeit_flags, which neither
+  // the "report already submitted" check above nor the admin console's
+  // games-served calculation (which only counts match_report_scores rows)
+  // ever looks at - so it's structurally inert to both. Only ever sets
+  // reason='abandoned': Forfeit and Postponed remain admin-only calls (see
+  // admin_server.js's flag-forfeit), since a referee reporting a game
+  // didn't happen isn't the same as ruling on whose fault it was.
+  const markAbandonedMatch = url.pathname.match(/^\/api\/match-report\/([^/]+)\/mark-abandoned$/);
+  if (req.method === 'POST' && markAbandonedMatch) {
+    const gameId = decodeURIComponent(markAbandonedMatch[1]);
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', async () => {
+      let payload;
+      try {
+        payload = JSON.parse(body);
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+      }
+      const notes = (payload.notes || '').trim();
+      if (!notes) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'A description is required to mark this game abandoned.' }));
+      }
+      try {
+        const existingReport = await pool.query('SELECT 1 FROM match_report_scores WHERE game_id = $1', [gameId]);
+        if (existingReport.rowCount > 0) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'A match report has already been submitted for this game - it cannot be marked abandoned.' }));
+        }
+        await pool.query(
+          `INSERT INTO forfeit_flags (game_id, reason, notes, flagged_by, flagged_at)
+           VALUES ($1, 'abandoned', $2, $3, now())
+           ON CONFLICT (game_id) DO UPDATE SET reason = 'abandoned', notes = EXCLUDED.notes, flagged_by = EXCLUDED.flagged_by, flagged_at = now()`,
+          [gameId, notes, 'Referee (via matchday)']
+        );
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) {
+        console.error('[api/match-report mark-abandoned] Error:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
     return;
   }
 
