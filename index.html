@@ -385,7 +385,7 @@
       const res = await fetch('/api/match-report/' + encodeURIComponent(gameId) + '/mark-abandoned', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes }),
+        body: JSON.stringify({ notes, gameStartTime: (gameData && gameData.event && gameData.event.start) || null }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Unknown error');
@@ -720,7 +720,15 @@
     // exist, this game's report is permanently locked to read-only (unless
     // an admin explicitly enters Edit Full Report mode, see below).
     reportAlreadySubmitted = !!data.scores;
-    reportForfeitFlag = data.forfeitFlag || null;
+    // A flag pinned to a different start time than this game's current one
+    // is stale - SportsEngine reused the ID for a rescheduled game - so it's
+    // ignored (check-in / match report work normally); the server keeps the
+    // row as history.
+    const flag = data.forfeitFlag || null;
+    const currentStart = gameData && gameData.event && gameData.event.start;
+    const flagIsStale = !!(flag && flag.game_start_time && currentStart
+      && new Date(flag.game_start_time).getTime() !== new Date(currentStart).getTime());
+    reportForfeitFlag = flagIsStale ? null : flag;
   }
 
   function showMatchReport() {

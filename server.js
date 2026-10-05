@@ -508,7 +508,7 @@ const server = http.createServer(async (req, res) => {
       // here) - lets the landing page show "already marked abandoned"
       // instead of the mark-abandoned button on reload, and blocks
       // mark-abandoned below once a real report exists.
-      const forfeitResult = await pool.query('SELECT reason, notes FROM forfeit_flags WHERE game_id = $1', [gameId]);
+      const forfeitResult = await pool.query('SELECT reason, notes, game_start_time FROM forfeit_flags WHERE game_id = $1', [gameId]);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         scores: scoresResult.rows[0] || null,
@@ -558,11 +558,26 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(409, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: 'A match report has already been submitted for this game - it cannot be marked abandoned.' }));
         }
+        // Pin the flag to the game's scheduled start (sent by the page from
+        // SportsEngine's event data; falls back to the shared schedule
+        // cache) so that if this game ID is later reused for a rescheduled
+        // game, the flag is recognised as stale by both apps instead of
+        // blocking the new game. NULL (neither available) = always active.
+        let gameStartTime = null;
+        if (payload.gameStartTime && !isNaN(new Date(payload.gameStartTime).getTime())) {
+          gameStartTime = new Date(payload.gameStartTime).toISOString();
+        }
         await pool.query(
-          `INSERT INTO forfeit_flags (game_id, reason, notes, flagged_by, flagged_at)
-           VALUES ($1, 'abandoned', $2, $3, now())
-           ON CONFLICT (game_id) DO UPDATE SET reason = 'abandoned', notes = EXCLUDED.notes, flagged_by = EXCLUDED.flagged_by, flagged_at = now()`,
-          [gameId, notes, 'Referee (via matchday)']
+          `INSERT INTO forfeit_flags (game_id, reason, notes, flagged_by, flagged_at, game_start_time)
+           VALUES ($1, 'abandoned', $2, $3, now(), COALESCE($4::timestamptz, (SELECT start_time FROM schedule_games_cache WHERE game_id = $1)))
+           ON CONFLICT (game_id) DO UPDATE SET
+             reason = 'abandoned', notes = EXCLUDED.notes, flagged_by = EXCLUDED.flagged_by, flagged_at = now(),
+             referee_paid = CASE WHEN forfeit_flags.game_start_time IS NOT NULL AND EXCLUDED.game_start_time IS NOT NULL
+                                  AND forfeit_flags.game_start_time <> EXCLUDED.game_start_time THEN NULL ELSE forfeit_flags.referee_paid END,
+             charge_status = CASE WHEN forfeit_flags.game_start_time IS NOT NULL AND EXCLUDED.game_start_time IS NOT NULL
+                                  AND forfeit_flags.game_start_time <> EXCLUDED.game_start_time THEN NULL ELSE forfeit_flags.charge_status END,
+             game_start_time = COALESCE(EXCLUDED.game_start_time, forfeit_flags.game_start_time)`,
+          [gameId, notes, 'Referee (via matchday)', gameStartTime]
         );
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
