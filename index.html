@@ -238,6 +238,11 @@
 
       config = configRes;
       gameData = gameRes;
+      if (gameData.nationalTournament) {
+        // National Tournament: no score push to SportsEngine; simpler wording.
+        const b1 = document.getElementById('matchReportBtn'); if (b1) b1.textContent = 'Submit Report';
+        const b2 = document.getElementById('submitReportBtn'); if (b2) b2.textContent = 'Submit Report';
+      }
 
       await loadCheckinState();
       await loadMatchReportState();
@@ -1446,7 +1451,10 @@
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Unknown error');
 
-      if (json.scoreUpdated) {
+      if (json.scorePushSkipped) {
+        resultEl.innerHTML = `<div style="color:var(--success); font-size:13px;">Report submitted.</div>`;
+        btn.style.display = 'none';
+      } else if (json.scoreUpdated) {
         resultEl.innerHTML = `<div style="color:var(--success); font-size:13px;">${adminEditMode ? 'Edited report saved' : 'Match report saved'}, and the score was pushed to SportsEngine successfully.</div>`;
         btn.style.display = 'none'; // report is fully done - nothing left to retry, no button needed
       } else {
@@ -1464,7 +1472,7 @@
       if (btn.style.display !== 'none') {
         btn.disabled = false;
         // Don't stomp the "Retry Score Push" label if that's what was just set above.
-        if (btn.textContent === 'Submitting...') btn.textContent = 'Submit Match Report';
+        if (btn.textContent === 'Submitting...') btn.textContent = (gameData && gameData.nationalTournament) ? 'Submit Report' : 'Submit Match Report';
         else if (btn.textContent === 'Saving...') btn.textContent = 'Save Edited Report';
       }
     }

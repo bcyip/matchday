@@ -53,6 +53,12 @@ const MIN_PLAYERS_REQUIRED = parseInt(process.env.MIN_PLAYERS_REQUIRED || '7', 1
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
+  // Explicit rather than relying on pg's default. Queries here are
+  // millisecond-short, so 10 connections comfortably serve ~100 concurrent
+  // users. DATABASE_URL should be Supabase's pooler (port 6543).
+  max: parseInt(process.env.PG_POOL_MAX || '10', 10),
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
 });
 
 pool.on('error', (err) => {
@@ -108,11 +114,17 @@ function refreshAccessToken() {
   });
 }
 
+// Concurrent callers share ONE in-flight refresh, so a burst of requests
+// right as the token expires triggers a single refresh, not dozens.
+let tokenRefreshInFlight = null;
 async function getValidAccessToken() {
   if (tokenCache.accessToken && Date.now() < tokenCache.expiresAt) {
     return tokenCache.accessToken;
   }
-  return refreshAccessToken();
+  if (!tokenRefreshInFlight) {
+    tokenRefreshInFlight = refreshAccessToken().finally(() => { tokenRefreshInFlight = null; });
+  }
+  return tokenRefreshInFlight;
 }
 
 async function callGraphQL(query, variables) {
@@ -162,6 +174,32 @@ async function callGraphQL(query, variables) {
   });
 }
 
+// National Tournament games: submitting a match report here does NOT push the
+// score (or the COMPLETED status) to SportsEngine. It is detected per game from
+// the game's SportsEngine season/program name (contains "National Tournament",
+// case-insensitive; override with NATIONAL_SEASON_MATCH, comma-separated). The
+// report is saved as usual and an admin pushes the score by hand with the
+// "Push Score to SE" button in the admin console (retry-score-push endpoint,
+// which always works for any game).
+const NATIONAL_SEASON_MATCH = (process.env.NATIONAL_SEASON_MATCH || 'national tournament')
+  .split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+function isNationalSeasonName(name) {
+  const n = String(name || '').toLowerCase();
+  return !!n && NATIONAL_SEASON_MATCH.some((m) => n.includes(m));
+}
+async function isNationalTournamentGame(gameId) {
+  try {
+    const d = await fetchSeGameDataCached(gameId, false);
+    return !!d.nationalTournament;
+  } catch (e) {
+    console.error('[national-tournament check] failed for game', gameId, e.message);
+    return false;
+  }
+}
+class TournamentPushSkipped extends Error {
+  constructor() { super('Automatic score push is off for National Tournament games.'); this.name = 'TournamentPushSkipped'; }
+}
+
 /**
  * Marks a game's status as COMPLETED in SportsEngine. Only ever called
  * AFTER a successful updateScore - never before, and never if the score
@@ -207,7 +245,53 @@ async function getSuspendedPlayers(teamId, asOfGameDate) {
     .filter((row) => row.games_served < row.games_suspended);
 }
 
-async function fetchGameWithRosters(gameId) {
+// ---- SportsEngine game/roster cache -------------------------------------
+// Only the SportsEngine portion (event + rosters + logos) is cached.
+// Suspension flags are recomputed from the DB on every request, so a newly
+// issued suspension shows immediately. Concurrent requests for the same game
+// share one in-flight fetch; failures are never cached.
+const SE_GAME_CACHE_TTL_MS = parseInt(process.env.SE_GAME_CACHE_TTL_SECONDS || '60', 10) * 1000;
+const SE_GAME_CACHE_MAX = 500;
+const seGameCache = new Map(); // gameId -> { expiresAt, promise }
+
+function fetchSeGameDataCached(gameId, forceRefresh) {
+  const now = Date.now();
+  const hit = seGameCache.get(gameId);
+  if (!forceRefresh && hit && hit.expiresAt > now) return hit.promise;
+
+  const promise = fetchSeGameData(gameId);
+  const entry = { expiresAt: now + SE_GAME_CACHE_TTL_MS, promise };
+  seGameCache.set(gameId, entry);
+  promise.catch(() => { if (seGameCache.get(gameId) === entry) seGameCache.delete(gameId); });
+
+  if (seGameCache.size > SE_GAME_CACHE_MAX) {
+    for (const [k, v] of seGameCache) {
+      if (v.expiresAt <= now) seGameCache.delete(k);
+    }
+    while (seGameCache.size > SE_GAME_CACHE_MAX) seGameCache.delete(seGameCache.keys().next().value);
+  }
+  return promise;
+}
+
+async function fetchGameWithRosters(gameId, forceRefresh) {
+  const cached = await fetchSeGameDataCached(gameId, forceRefresh);
+  const { event, teams, programName, nationalTournament } = JSON.parse(JSON.stringify(cached)); // fresh copy; we mutate below
+  for (const team of teams) {
+    if (event.start) {
+      const suspended = await getSuspendedPlayers(team.id, event.start);
+      // Normalize to strings on both sides - SportsEngine returns profileId
+      // as a raw JS number, while Postgres's profile_id column comes back
+      // as a string. Set.has() uses strict equality, so "66976676" !==
+      // 66976676 - this silently broke suspension display until fixed.
+      const suspendedIds = new Set(suspended.map((s) => String(s.profile_id)));
+      (team.players || []).forEach((p) => { p.suspended = suspendedIds.has(String(p.profileId)); });
+      (team.staff || []).forEach((s) => { s.suspended = suspendedIds.has(String(s.profileId)); });
+    }
+  }
+  return { event, teams, programName, nationalTournament };
+}
+
+async function fetchSeGameData(gameId) {
   const eventQuery = `
     query Event($id: String!) {
       event(id: $id) {
@@ -249,30 +333,18 @@ async function fetchGameWithRosters(gameId) {
       }
     }`;
 
-  const teams = [];
-  for (const teamId of teamIds) {
+  // Both rosters fetched in parallel (was sequential).
+  const teams = await Promise.all(teamIds.map(async (teamId) => {
     const data = await callGraphQL(rosterQuery, { id: teamId });
     const team = data.team;
     team.logoUrl = logoByTeamId[teamId] || null;
     team.divisionId = (divisionByTeamId[teamId] && divisionByTeamId[teamId].divisionId) || null;
     team.gender = (divisionByTeamId[teamId] && divisionByTeamId[teamId].gender) || null;
+    return team;
+  }));
 
-    if (event.start) {
-      const suspended = await getSuspendedPlayers(teamId, event.start);
-      // Normalize to strings on both sides - SportsEngine returns profileId
-      // as a raw JS number, while Postgres's profile_id column comes back
-      // as a string. Set.has() and === both use strict equality, so
-      // "66976676" !== 66976676 even though they represent the same
-      // player - this silently broke suspension display until fixed here.
-      const suspendedIds = new Set(suspended.map((s) => String(s.profile_id)));
-      (team.players || []).forEach((p) => { p.suspended = suspendedIds.has(String(p.profileId)); });
-      (team.staff || []).forEach((s) => { s.suspended = suspendedIds.has(String(s.profileId)); });
-    }
-
-    teams.push(team);
-  }
-
-  return { event, teams };
+  const programName = ((event.eventTeams || []).map((t) => t.team && t.team.program && t.team.program.primaryName).filter(Boolean)[0]) || null;
+  return { event, teams, programName, nationalTournament: isNationalSeasonName(programName) };
 }
 
 function matchReportGetPattern(pathname) {
@@ -313,7 +385,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && gameMatch) {
     const gameId = decodeURIComponent(gameMatch[1]);
     try {
-      const result = await fetchGameWithRosters(gameId);
+      const result = await fetchGameWithRosters(gameId, url.searchParams.get('refresh') === '1');
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     } catch (err) {
@@ -912,7 +984,9 @@ const server = http.createServer(async (req, res) => {
       let scoreUpdated = false;
       let scoreError = null;
       let statusUpdated = false;
+      let scorePushSkipped = false;
       try {
+        if (await isNationalTournamentGame(gameId)) throw new TournamentPushSkipped();
         const mutation = `
           mutation UpdateScore($eventId: String!, $s1: String!, $s2: String!) {
             updateScore(eventId: $eventId, scoreTeam1: $s1, scoreTeam2: $s2) {
@@ -929,12 +1003,16 @@ const server = http.createServer(async (req, res) => {
           console.error('[api/match-report admin-edit] markGameComplete error (score was still updated):', statusErr.message);
         }
       } catch (err) {
-        console.error('[api/match-report admin-edit] updateScore error:', err.message);
-        scoreError = err.message;
+        if (err instanceof TournamentPushSkipped) {
+          scorePushSkipped = true;
+        } else {
+          console.error('[api/match-report admin-edit] updateScore error:', err.message);
+          scoreError = err.message;
+        }
       }
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, postgresSaved, scoreUpdated, scoreError, statusUpdated }));
+      res.end(JSON.stringify({ success: true, postgresSaved, scoreUpdated, scoreError, statusUpdated, scorePushSkipped }));
     });
     return;
   }
@@ -1052,7 +1130,9 @@ const server = http.createServer(async (req, res) => {
       let scoreUpdated = false;
       let scoreError = null;
       let statusUpdated = false;
+      let scorePushSkipped = false;
       try {
+        if (await isNationalTournamentGame(gameId)) throw new TournamentPushSkipped();
         const mutation = `
           mutation UpdateScore($eventId: String!, $s1: String!, $s2: String!) {
             updateScore(eventId: $eventId, scoreTeam1: $s1, scoreTeam2: $s2) {
@@ -1071,12 +1151,16 @@ const server = http.createServer(async (req, res) => {
           console.error('[api/match-report POST] markGameComplete error (score was still updated):', statusErr.message);
         }
       } catch (err) {
-        console.error('[api/match-report POST] updateScore error:', err.message);
-        scoreError = err.message;
+        if (err instanceof TournamentPushSkipped) {
+          scorePushSkipped = true;
+        } else {
+          console.error('[api/match-report POST] updateScore error:', err.message);
+          scoreError = err.message;
+        }
       }
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, postgresSaved, scoreUpdated, scoreError, statusUpdated }));
+      res.end(JSON.stringify({ success: true, postgresSaved, scoreUpdated, scoreError, statusUpdated, scorePushSkipped }));
     });
     return;
   }
