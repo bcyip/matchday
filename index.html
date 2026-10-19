@@ -84,7 +84,7 @@
     <p class="muted" style="margin-top:10px; margin-bottom:0; text-align:center; color:var(--danger); font-weight:600;" id="matchReportGateNote">Complete Check-In for at least one player before Match Report unlocks.</p>
     <div class="landing-buttons">
       <button onclick="showCheckIn()">Check In</button>
-      <button id="matchReportBtn" class="secondary" disabled onclick="showMatchReport()">Submit Match Report</button>
+      <button id="matchReportBtn" class="secondary" disabled onclick="showMatchReport()">Match Report</button>
     </div>
 
     <!-- Already-flagged status - shown in place of the Mark Abandoned
@@ -110,6 +110,9 @@
   <div id="checkInView" class="card" style="display:none;">
     <a href="#" class="back-link" onclick="showLanding(); return false;">← Back</a>
     <h2 style="margin-top:0; color:var(--navy);">Check In</h2>
+
+    <!-- Appears once both teams have enough players checked in -->
+    <button id="checkInMatchReportBtn" style="display:none; width:100%; margin-bottom:16px;" onclick="showMatchReport()">Match Report</button>
 
     <div class="section-label">Select a team</div>
     <div id="teamSelector" style="display:flex; gap:10px; margin-bottom:16px;"></div>
@@ -240,7 +243,6 @@
       gameData = gameRes;
       if (gameData.nationalTournament) {
         // National Tournament: no score push to SportsEngine; simpler wording.
-        const b1 = document.getElementById('matchReportBtn'); if (b1) b1.textContent = 'Submit Report';
         const b2 = document.getElementById('submitReportBtn'); if (b2) b2.textContent = 'Submit Report';
       }
 
@@ -309,13 +311,21 @@
 
     const team1Count = countCheckedInPlayers(team1Id);
     const team2Count = countCheckedInPlayers(team2Id);
-    const bothTeamsReady = team1Count >= MIN_PLAYERS_CHECKED_IN && team2Count >= MIN_PLAYERS_CHECKED_IN;
+    const enoughPlayers = team1Count >= MIN_PLAYERS_CHECKED_IN && team2Count >= MIN_PLAYERS_CHECKED_IN;
+    // "Check-in complete" = both teams have been marked done on the check-in page.
+    const bothDone = !!(team1Id && team2Id && teamDoneState[team1Id] && teamDoneState[team2Id]);
+    const bothTeamsReady = enoughPlayers && bothDone;
 
     document.getElementById('matchReportBtn').disabled = !bothTeamsReady;
+    const ciBtn = document.getElementById('checkInMatchReportBtn');
+    if (ciBtn) ciBtn.style.display = (bothTeamsReady && !reportForfeitFlag) ? 'block' : 'none';
 
     const noteEl = document.getElementById('matchReportGateNote');
     if (bothTeamsReady) {
       noteEl.style.display = 'none';
+    } else if (enoughPlayers) {
+      noteEl.textContent = 'Complete check-in for both teams before Match Report unlocks.';
+      noteEl.style.display = 'block';
     } else {
       const team1Name = (gameData.teams[0] && gameData.teams[0].name) || 'Team 1';
       const team2Name = (gameData.teams[1] && gameData.teams[1].name) || 'Team 2';
@@ -350,6 +360,7 @@
       abandonSection.style.display = 'none';
 
       document.getElementById('matchReportBtn').disabled = true;
+      const ciBtn2 = document.getElementById('checkInMatchReportBtn'); if (ciBtn2) ciBtn2.style.display = 'none';
       const checkInBtn = document.querySelector('.landing-buttons button:not(.secondary)');
       if (checkInBtn) checkInBtn.disabled = true;
       document.getElementById('matchReportGateNote').style.display = 'none';
@@ -435,6 +446,7 @@
   // Renders ONLY the currently active team's roster - never both at once,
   // even when both teams are selected (use the tabs above to switch).
   function renderActiveRoster() {
+    updateMatchReportGate(); // done/edit toggles change whether Match Report is unlocked
     const container = document.getElementById('activeTeamRoster');
     if (!activeCheckinTeamId) {
       container.innerHTML = '<p class="muted">Select a team above to begin check-in.</p>';
