@@ -288,6 +288,25 @@ async function fetchGameWithRosters(gameId, forceRefresh) {
       (team.staff || []).forEach((s) => { s.suspended = suspendedIds.has(String(s.profileId)); });
     }
   }
+  // Kits (from the admin Team Kits page) and this game's per-part kit choices.
+  // Read fresh each time so admin changes show up immediately. Best effort: if
+  // the kit tables don't exist yet, check-in simply shows no kits.
+  try {
+    const teamIds = teams.map((t) => t.id).filter(Boolean);
+    if (teamIds.length) {
+      const kitRows = await pool.query('SELECT team_id, kit_type, jersey_color, shorts_color, socks_color FROM team_kits WHERE team_id = ANY($1)', [teamIds]);
+      const assignRows = await pool.query('SELECT team_id, out_jersey, out_shorts, out_socks, gk_jersey, gk_shorts, gk_socks FROM game_kit_assignments WHERE game_id = $1', [gameId]);
+      for (const team of teams) {
+        team.kits = {};
+        kitRows.rows.filter((r) => r.team_id === team.id).forEach((r) => {
+          team.kits[r.kit_type] = { jersey_color: r.jersey_color, shorts_color: r.shorts_color, socks_color: r.socks_color };
+        });
+        team.kitAssignment = assignRows.rows.find((r) => r.team_id === team.id) || {};
+      }
+    }
+  } catch (kitErr) {
+    console.warn('[api/game] Could not load kits (continuing without):', kitErr.message);
+  }
   return { event, teams, programName, nationalTournament };
 }
 
@@ -313,8 +332,10 @@ async function fetchSeGameData(gameId) {
 
   const logoByTeamId = {};
   const divisionByTeamId = {};
+  const isHomeByTeamId = {};
   (event.eventTeams || []).forEach((t) => {
     if (t.team && t.team.id) {
+      isHomeByTeamId[t.team.id] = !!t.homeTeam;
       logoByTeamId[t.team.id] = (t.team.brand && t.team.brand.logoUrl) || null;
       divisionByTeamId[t.team.id] = {
         divisionId: t.team.divisionId || null,
@@ -340,6 +361,7 @@ async function fetchSeGameData(gameId) {
     team.logoUrl = logoByTeamId[teamId] || null;
     team.divisionId = (divisionByTeamId[teamId] && divisionByTeamId[teamId].divisionId) || null;
     team.gender = (divisionByTeamId[teamId] && divisionByTeamId[teamId].gender) || null;
+    team.isHome = !!isHomeByTeamId[teamId];
     return team;
   }));
 

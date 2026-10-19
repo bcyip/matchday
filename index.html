@@ -114,7 +114,7 @@
     <!-- Appears once both teams have enough players checked in -->
     <button id="checkInMatchReportBtn" style="display:none; width:100%; margin-bottom:16px;" onclick="showMatchReport()">Match Report</button>
 
-    <div class="section-label">Select a team</div>
+    <div class="section-label" style="text-align:center;">Select a team to begin check-in</div>
     <div id="teamSelector" style="display:flex; gap:10px; margin-bottom:16px;"></div>
 
     <div id="activeTeamRoster"></div>
@@ -426,6 +426,41 @@
 
   // The tiles ARE the switcher — clicking one shows that team's roster now,
   // clicking the other switches to it. No separate selection step or tabs.
+  // Player + goalkeeper kit as worn in this game: each of jersey / shorts /
+  // socks comes from the admin's per-game choice, else the default (home team
+  // Home, away team Away, goalkeepers GK Primary).
+  function kitSvg(kit) {
+    const part = (hex, d) => hex
+      ? `<path d="${d}" fill="${hex}" stroke="rgba(0,0,0,.35)" stroke-width="1.2" stroke-linejoin="round"/>`
+      : `<path d="${d}" fill="#F4F6FA" stroke="#B8C0CC" stroke-width="1.2" stroke-dasharray="3 2" stroke-linejoin="round"/>`;
+    const jersey = 'M18 4 L26 2 Q32 9 38 2 L46 4 L58 18 L49 27 L45 22 L45 44 L19 44 L19 22 L15 27 L6 18 Z';
+    const shorts = 'M19 46 L45 46 L48 68 L34 68 L32 57 L30 68 L16 68 Z';
+    const sockL = 'M17 71 L28 71 L27 95 Q22 98 17 95 Z';
+    const sockR = 'M36 71 L47 71 L47 95 Q42 98 37 95 Z';
+    return `<svg viewBox="0 0 64 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kit" style="width:100%; height:100%; display:block;">
+      ${part(kit.jersey_color, jersey)}${part(kit.shorts_color, shorts)}${part(kit.socks_color, sockL)}${part(kit.socks_color, sockR)}</svg>`;
+  }
+  function teamKitColors(team, group) {
+    const kits = team.kits || {};
+    const a = team.kitAssignment || {};
+    const dflt = group === 'out' ? (team.isHome ? 'home' : 'away') : 'gk_primary';
+    const out = {};
+    ['jersey', 'shorts', 'socks'].forEach(part => {
+      const kt = a[group + '_' + part] || dflt;
+      out[part + '_color'] = (kits[kt] || {})[part + '_color'] || null;
+    });
+    return out;
+  }
+  function teamKitsHtml(team) {
+    const one = (label, group) => {
+      const c = teamKitColors(team, group);
+      if (!(c.jersey_color || c.shorts_color || c.socks_color)) return '';
+      return `<div style="text-align:center;"><div style="width:26px; height:40px; margin:0 auto;">${kitSvg(c)}</div><div class="muted" style="font-size:10.5px; margin-top:2px;">${label}</div></div>`;
+    };
+    const html = one('Player', 'out') + one('GK', 'gk');
+    return html ? `<div style="display:flex; gap:14px; justify-content:center; margin-top:8px;">${html}</div>` : '';
+  }
+
   function renderTeamSelector() {
     const container = document.getElementById('teamSelector');
     container.innerHTML = gameData.teams.map(team => `
@@ -433,6 +468,7 @@
         onclick="selectActiveTeam('${escapeJs(team.id)}')">
         ${team.logoUrl ? `<img src="${escapeHtml(team.logoUrl)}" alt="" style="width:44px; height:44px; object-fit:contain; margin-bottom:6px;" onerror="this.style.display='none'" />` : ''}
         <div class="tname">${escapeHtml(team.name)}</div>
+        ${teamKitsHtml(team)}
       </div>
     `).join('');
     renderActiveRoster();
@@ -449,7 +485,7 @@
     updateMatchReportGate(); // done/edit toggles change whether Match Report is unlocked
     const container = document.getElementById('activeTeamRoster');
     if (!activeCheckinTeamId) {
-      container.innerHTML = '<p class="muted">Select a team above to begin check-in.</p>';
+      container.innerHTML = '';
       return;
     }
 
