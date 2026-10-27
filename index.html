@@ -334,7 +334,7 @@
       const parts = [];
       if (team1Count < MIN_PLAYERS_CHECKED_IN) parts.push(`${escapeHtml(team1Name)} (${team1Count}/${MIN_PLAYERS_CHECKED_IN})`);
       if (team2Count < MIN_PLAYERS_CHECKED_IN) parts.push(`${escapeHtml(team2Name)} (${team2Count}/${MIN_PLAYERS_CHECKED_IN})`);
-      noteEl.innerHTML = `Both teams need at least ${MIN_PLAYERS_CHECKED_IN} players checked in before Match Report unlocks. Still needed: ${parts.join(' and ')}.`;
+      noteEl.innerHTML = `Both teams need at least ${MIN_PLAYERS_CHECKED_IN} players checked in before Match Report unlocks.<br>Still needed:<br>${parts.join(' and ')}`;
       noteEl.style.display = 'block';
     }
   }
