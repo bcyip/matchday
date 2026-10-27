@@ -3,927 +3,444 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>USCCS Admin Console — Match Reports</title>
+  <title>USCCS Match Day</title>
   <style>
-    :root { --navy: #11213F; --gold: #E7C247; --bg: #F4F6FA; --border: #E1E5EC; --gray: #5A6472; --danger: #C0392B; }
-    body { font-family: -apple-system, sans-serif; background: var(--bg); margin: 0; color: #1a1a1a; }
-    header { background: var(--navy); color: var(--gold); padding: 14px 20px; font-weight: 700; font-size: 17px; display: flex; align-items: center; justify-content: space-between; }
-    header a { color: #6BC4E8; text-decoration: none; font-size: 13px; font-weight: 600; }
-    main { max-width: 1200px; margin: 0 auto; padding: 24px; }
-    .card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 18px; }
-    .muted { color: var(--gray); font-size: 13px; }
-    .filters { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; }
-    .field { display: flex; flex-direction: column; gap: 4px; position: relative; }
-    .field label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--gray); }
-    .field select, .field input { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13.5px; min-width: 140px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th { text-align: left; font-size: 11px; text-transform: uppercase; color: var(--gray); padding: 8px; border-bottom: 2px solid var(--border); white-space: nowrap; }
-    td { padding: 8px; border-bottom: 1px solid var(--border); font-size: 13.5px; }
-    .card-count { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 700; margin-left: 4px; }
-    .push-score-btn { padding: 5px 10px; font-size: 11.5px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: var(--navy); cursor: pointer; white-space: nowrap; }
-    .push-score-btn:hover:not(:disabled) { background: var(--bg); }
-    .push-score-btn:disabled { opacity: .5; cursor: not-allowed; }
-    .yc-count { background: #FDF0DD; color: #8A6210; }
-    .rc-count { background: #FBEAE8; color: var(--danger); }
-    .err-box { background: #FBEAE8; color: var(--danger); padding: 10px 14px; border-radius: 6px; margin-top: 10px; font-size: 13px; }
-
-    /* Box Score modal - match events with home team on the left, away on
-       the right, sorted by minute. */
-    .box-score-overlay { display: none; position: fixed; inset: 0; background: rgba(17,33,63,0.55); z-index: 100; align-items: center; justify-content: center; padding: 20px; }
-    .box-score-overlay.open { display: flex; }
-    .box-score-modal { background: #fff; border-radius: 10px; max-width: 520px; width: 100%; max-height: 82vh; overflow-y: auto; padding: 20px; }
-    .box-score-modal h3 { margin: 0 0 4px; font-size: 16px; color: var(--navy); }
-    .box-score-modal .muted { margin: 0 0 14px; }
-    .box-score-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    .box-score-col h4 { font-size: 12px; text-transform: uppercase; color: var(--gray); margin: 0 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
-    .box-score-event { font-size: 13.5px; padding: 4px 0; display: flex; gap: 6px; }
-    .box-score-close { margin-top: 16px; padding: 8px 16px; background: var(--navy); color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
-
-    /* Mobile card view - shown instead of the table below a breakpoint
-       (see the @media block at the bottom of this stylesheet). Built as
-       its own markup rather than reusing the table's, since the requested
-       layout (report link left / teams right, score+cards+box-score
-       stacked and centered below the teams) doesn't map onto reshuffled
-       table cells. */
-    .mr-cards { display: none; }
-    .mr-card { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; }
-    .mr-card-report-link { display: block; text-align: center; font-size: 11px; font-weight: 600; color: var(--navy); text-decoration: none; }
-    .mr-card-meta { text-align: center; font-size: 10.5px; color: var(--gray); margin-top: 2px; }
-    .mr-card-teams { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 5px; font-size: 13px; font-weight: 600; }
-    .mr-card-teams .mr-card-team { flex: 1; text-align: right; }
-    .mr-card-teams .mr-card-team:last-child { text-align: left; }
-    .mr-card-cards { flex-shrink: 0; white-space: nowrap; }
-    .mr-card-score-inline { flex-shrink: 0; font-weight: 700; color: var(--navy); font-size: 13.5px; white-space: nowrap; }
-    .mr-card-incident-row { text-align: center; margin-top: 4px; }
-    .mr-card-incident-row .push-score-btn { padding: 3px 8px; font-size: 11px; }
-    .mr-card-actions { margin-top: 6px; text-align: center; font-size: 12px; }
-    .mr-card-actions .push-score-btn { padding: 4px 9px; font-size: 11.5px; }
-
-    /* Team kits - tiny kit icon beside team names, and the kits modal. */
-    .mini-kit { display: inline-flex; flex-direction: column; align-items: center; cursor: pointer; vertical-align: middle; margin: 0 4px; line-height: 0; }
-    .mini-kit-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; color: var(--gray); line-height: 1; margin-top: 2px; }
-    .mini-kit svg { height: 22px; width: auto; }
-    .kits-link { font-size: 11px; font-weight: 600; color: var(--navy); }
-    .kits-modal { max-width: 860px; }
-    .kits-teams { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-    .kits-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .kit-tile { border: 1px solid var(--border); border-radius: 8px; padding: 6px; text-align: center; background: var(--bg); }
-    .kit-section { margin-top: 10px; }
-    .kit-section-head { display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--gray); margin-bottom: 4px; }
-    .kit-section-head a { text-transform: none; font-weight: 600; color: var(--navy); }
-    .kit-section-body { display: flex; gap: 8px; align-items: flex-start; }
-    .kit-preview { width: 52px; flex-shrink: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
-    .kit-preview svg { width: 100%; height: auto; display: block; }
-    .kit-parts { flex: 1; min-width: 0; }
-    .part-row { display: grid; grid-template-columns: 46px 1fr 1fr; gap: 5px; align-items: stretch; margin-bottom: 5px; }
-    .part-row-label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--gray); display: flex; align-items: center; }
-    .part-opt { display: flex; gap: 6px; align-items: center; border: 1px solid var(--border); border-radius: 8px; padding: 4px 6px; background: var(--bg); cursor: pointer; min-width: 0; }
-    .part-opt:hover { border-color: var(--navy); }
-    .part-opt.sel { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(231,194,71,.45); background: #FFFBEA; }
-    .part-opt img, .part-swatch { width: 34px; height: 34px; border-radius: 6px; flex-shrink: 0; object-fit: cover; border: 1px solid rgba(0,0,0,.25); display: block; }
-    .part-swatch.none { background: repeating-linear-gradient(45deg, #fff, #fff 4px, #E1E5EC 4px, #E1E5EC 8px); }
-    .part-opt-txt { font-size: 10.5px; line-height: 1.3; color: var(--gray); min-width: 0; }
-    .part-opt-txt b { color: #1a1a1a; font-size: 11px; }
-    .kit-tile.pickable { cursor: pointer; }
-    .kit-tile.pickable:hover { border-color: var(--navy); }
-    .kit-tile.expected { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(231,194,71,.45); background: #FFFBEA; }
-    .kit-tile .kit-label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; color: var(--gray); }
-    .kit-visual { height: 84px; display: flex; align-items: center; justify-content: center; }
-    .kit-visual svg { height: 80px; width: auto; }
-    .kit-visual img { max-width: 100%; max-height: 84px; object-fit: contain; border-radius: 4px; }
-    .kit-thumbs { display: flex; gap: 3px; justify-content: center; margin: 3px 0; }
-    .kit-thumbs img { width: 30px; height: 30px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); cursor: zoom-in; background: #fff; }
-    .kit-colors { font-size: 11px; color: var(--gray); line-height: 1.35; }
-    .kit-colors .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; border: 1px solid rgba(0,0,0,.25); vertical-align: -1px; margin-right: 3px; }
-    @media (max-width: 720px) { .kits-teams { grid-template-columns: 1fr; } }
-
-    /* Tournament mode filter bar (day / gender / division tier buttons). */
-    .tbar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
-    .tbar-label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--gray); width: 62px; flex-shrink: 0; }
-    .seg { display: flex; flex-wrap: wrap; gap: 6px; }
-    .seg button { padding: 8px 14px; border: 1px solid var(--border); background: #fff; color: var(--navy); border-radius: 8px; font-size: 13.5px; font-weight: 600; cursor: pointer; }
-    .seg button:hover { border-color: var(--navy); }
-    .seg button.on { background: var(--navy); color: #fff; border-color: var(--navy); }
-    .seg button small { display: block; font-size: 10.5px; font-weight: 400; opacity: .8; }
-
-    @media (max-width: 720px) {
-      .table-wrap { display: none; }
-      .mr-cards { display: block; }
+    :root {
+      --navy: #11213F; --blue: #6BC4E8; --gold: #E7C247;
+      --bg: #F4F6FA; --border: #E1E5EC; --gray: #5A6472; --danger: #C0392B; --success: #1F7A4D;
     }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg); margin: 0; color: #1a1a1a; -webkit-tap-highlight-color: transparent; }
+    header { background: var(--navy); color: var(--gold); padding: 12px 20px; font-weight: 700; font-size: 18px; display: flex; align-items: center; gap: 10px; }
+    header img { width: 32px; height: 32px; display: block; }
+    main { max-width: 800px; margin: 0 auto; padding: 20px; }
+    @media (max-width: 480px) { main { padding: 12px; } }
+    .card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+    @media (max-width: 480px) { .card { padding: 14px; border-radius: 8px; } }
+    .muted { color: var(--gray); font-size: 13px; }
+    .err { color: var(--danger); font-size: 13px; margin-top: 6px; }
+    button { padding: 12px 18px; min-height: 46px; border-radius: 8px; border: none; background: var(--navy); color: #fff; font-weight: 600; cursor: pointer; font-size: 14.5px; }
+    button.secondary { background: #fff; color: var(--navy); border: 1px solid var(--border); }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    button:hover:not(:disabled) { opacity: .9; }
+    .landing-buttons { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+    .landing-buttons button { padding: 20px; font-size: 16px; }
+    .team-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 650px) { .team-columns { grid-template-columns: 1fr; } }
+    /* Goals stay side-by-side even on mobile, per requirement - overrides the general mobile-stacking rule above just for this section. */
+    @media (max-width: 650px) { #scoreGoalColumns { grid-template-columns: 1fr 1fr; gap: 10px; } }
+    .team-col h3 { margin: 0 0 4px; color: var(--navy); }
+    .cap-counter { font-size: 12.5px; color: var(--gray); margin-bottom: 10px; }
+    .cap-counter.at-cap { color: var(--danger); font-weight: 600; }
+    .roster-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); min-height: 44px; }
+    .roster-row.readonly { opacity: .5; }
+    .roster-row.readonly .rname { color: var(--gray); }
+    .done-banner { background: #E9F6EE; border: 1px solid var(--success); border-radius: 8px; padding: 16px; text-align: center; }
+    .roster-row input[type="checkbox"] { width: 24px; height: 24px; flex-shrink: 0; }
+    .roster-row .rname { flex: 1; font-size: 14.5px; }
+    .roster-row input[type="text"] { width: 52px; padding: 10px 4px; border: 1px solid var(--border); border-radius: 6px; text-align: center; font-size: 16px; min-height: 40px; }
+    .roster-row input:disabled { background: var(--bg); cursor: not-allowed; }
+    .team-select-tile { flex: 1; border: 2px solid var(--border); border-radius: 10px; padding: 18px 16px; text-align: center; cursor: pointer; user-select: none; min-height: 46px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    .team-select-tile.selected { border-color: var(--navy); background: #F4F9FD; }
+    .team-select-tile .tname { font-weight: 700; color: var(--navy); font-size: 15px; }
+    .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--gray); margin: 14px 0 4px; }
+    .back-link { display: inline-block; margin-bottom: 14px; color: var(--navy); text-decoration: none; font-size: 13px; padding: 6px 0; }
+    .back-link:hover { text-decoration: underline; }
+
+    .modal-overlay { position: fixed; inset: 0; background: rgba(17,33,63,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
+    .modal-box { background: #fff; border-radius: 10px; padding: 20px; width: 100%; max-width: 420px; max-height: 85vh; overflow-y: auto; }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .modal-header h3 { margin: 0; color: var(--navy); font-size: 16px; }
+    .option { padding: 13px 14px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; cursor: pointer; min-height: 44px; }
+    .option:hover { border-color: var(--blue); background: #F4F9FD; }
+
+    .score-input-row { display: flex; align-items: center; gap: 10px; }
+    .score-input-row input { width: 76px; padding: 12px; font-size: 22px; text-align: center; border: 1px solid var(--border); border-radius: 8px; min-height: 46px; }
+
+    .report-section { margin-top: 12px; }
+    .report-section h4 { margin: 0 0 6px; font-size: 13px; color: var(--gray); text-transform: uppercase; letter-spacing: .03em; }
+    .report-entry { display: flex; align-items: center; justify-content: space-between; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-bottom: 6px; font-size: 14px; min-height: 40px; }
+    .report-entry button { padding: 6px 12px; font-size: 13px; background: transparent; color: var(--danger); border: none; min-height: 32px; }
+    .add-event-btn { width: 100%; margin-top: 4px; }
   </style>
 </head>
 <body>
-<header>
-  <span id="pageTitle">USCCS Admin Console — Match Reports</span>
-  <span style="display:flex; align-items:center; gap:16px;">
-    <a href="/">← Misconduct Review</a>
-    <a href="/kits">Team Kits</a>
-    <a href="/tournament" id="tournamentNavLink" style="display:none;">Tournament Setup</a>
-    <a href="/oauth/logout">Log out</a>
-  </span>
-</header>
+
+<header><img src="data:image/png;base64,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" alt="USCCS" />Match Day</header>
+
 <main>
-  <div class="card">
-    <div id="tournamentBar" style="display:none; margin-bottom:6px;">
-      <div class="tbar-row"><span class="tbar-label">Day</span><div class="seg" id="tDayButtons"></div></div>
-      <div class="tbar-row"><span class="tbar-label">Gender</span><div class="seg" id="tGenderButtons"></div></div>
-      <div class="tbar-row"><span class="tbar-label">Division</span><div class="seg" id="tTierButtons"></div></div>
+  <!-- Read-only kit viewer (opened by tapping the kit drawings) -->
+  <div id="kitViewerOverlay" style="display:none; position:fixed; inset:0; background:rgba(17,33,63,.55); z-index:200; align-items:center; justify-content:center; padding:16px;" onclick="if (event.target === this) closeKitViewer();">
+    <div style="background:#fff; border-radius:12px; max-width:560px; width:100%; max-height:88vh; overflow-y:auto; padding:18px;">
+      <h3 id="kitViewerTitle" style="margin:0; color:var(--navy);"></h3>
+      <div id="kitViewerBody"></div>
+      <button class="secondary" style="width:100%; margin-top:16px;" onclick="closeKitViewer()">Close</button>
     </div>
-    <div class="filters" id="seasonFilterRow">
-      <div class="field">
-        <label for="conferenceFilter">Conference</label>
-        <select id="conferenceFilter" multiple size="4" onchange="onConferenceFilterChange()" style="min-width:110px; padding:6px; border:1px solid var(--border); border-radius:6px; font-size:13px;">
-          <option value="">All Conferences</option>
-          <option value="West">West</option>
-          <option value="Central">Central</option>
-          <option value="East">East</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="divisionFilterBtn">Division</label>
-        <button type="button" id="divisionFilterBtn" onclick="toggleDivisionDropdown()" style="text-align:left; min-width:140px; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13.5px; background:#fff; cursor:pointer;">All Divisions</button>
-        <div id="divisionDropdown" style="display:none; position:absolute; z-index:10; background:#fff; border:1px solid var(--border); border-radius:8px; padding:10px; margin-top:4px; max-height:280px; overflow-y:auto; box-shadow:0 4px 12px rgba(0,0,0,0.1);"></div>
-      </div>
-      <div class="field">
-        <label for="teamFilter">Team</label>
-        <select id="teamFilter" >
-          <option value="">All Teams</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="genderFilter">Gender</label>
-        <select id="genderFilter" >
-          <option value="">All</option>
-          <option value="Men">Men</option>
-          <option value="Women">Women</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="reportStatusFilter">Show</label>
-        <select id="reportStatusFilter" onchange="applyReportFilterAndRender()">
-          <option value="all">All Games</option>
-          <option value="has_report">USCCS Report</option>
-          <option value="no_report_registered">No USCCS Report</option>
-        </select>
-      </div>
+  </div>
+
+  <div id="loadingState" class="card">
+    <p class="muted">Loading game...</p>
+  </div>
+
+  <div id="errorState" class="card" style="display:none;">
+    <p class="err" id="errorText"></p>
+  </div>
+
+  <!-- LANDING: game info + Check In / Match Report choice -->
+  <div id="landingView" class="card" style="display:none;">
+    <h2 id="gameTitle" style="margin-top:0; color:var(--navy);"></h2>
+    <p class="muted" id="gameSubtitle" style="text-align:center;"></p>
+    <p class="muted" style="margin-top:10px; margin-bottom:0; text-align:center; color:var(--danger); font-weight:600;" id="matchReportGateNote">Complete Check-In for at least one player before Match Report unlocks.</p>
+    <div class="landing-buttons">
+      <button onclick="showCheckIn()">Check In</button>
+      <button id="matchReportBtn" class="secondary" disabled onclick="showMatchReport()">Match Report</button>
     </div>
-    <div class="filters" id="seasonDateRow" style="margin-top:14px;">
-      <div class="field">
-        <label for="dateFrom">From</label>
-        <input type="date" id="dateFrom"  />
-      </div>
-      <div class="field">
-        <label for="dateTo">To</label>
-        <input type="date" id="dateTo"  />
-      </div>
-      <div class="field">
-        <label style="visibility:hidden;">.</label>
-        <button type="button" onclick="setDateRangeToToday()" style="padding:9px 16px; background:#fff; color:var(--navy); border:1px solid var(--border); border-radius:6px; font-size:13.5px; font-weight:600; cursor:pointer;">Today</button>
-      </div>
-      <div class="field">
-        <label style="visibility:hidden;">.</label>
-        <button type="button" onclick="loadReports()" style="padding:9px 20px; background:var(--navy); color:#fff; border:none; border-radius:6px; font-size:13.5px; font-weight:600; cursor:pointer;">Load Reports</button>
+
+    <!-- Already-flagged status - shown in place of the Mark Abandoned
+         button once this game has a forfeit_flags row (whether a referee
+         marked it abandoned here, or admin marked it forfeit/postponed). -->
+    <div id="abandonedStatusBox" style="display:none; margin-top:16px; padding:12px; background:#FBEAE8; border:1px solid var(--danger); border-radius:8px; font-size:13px;"></div>
+
+    <div id="abandonSection" style="display:none; margin-top:18px; text-align:center;">
+      <button id="markAbandonedBtn" class="secondary" style="font-size:12.5px; padding:9px 16px; min-height:38px; color:var(--danger); border-color:var(--danger);" onclick="toggleAbandonForm()">⚠ Mark Game Abandoned</button>
+      <div id="abandonForm" style="display:none; margin-top:12px; text-align:left;">
+        <p class="muted" style="margin-top:0;">Arrived, but the game was called off for some reason (weather, field conditions, a team no-show, etc.)? Describe what happened below. This will NOT create a match report and will NOT count toward any player's suspension being served.</p>
+        <textarea id="abandonNotesInput" placeholder="Describe what happened..." style="width:100%; box-sizing:border-box; min-height:100px; padding:10px; border:1px solid var(--border); border-radius:8px; font-size:15px; font-family:inherit;" oninput="updateAbandonSubmitState()"></textarea>
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button id="submitAbandonedBtn" disabled style="flex:1; background:var(--danger);" onclick="submitAbandonedMatch()">Submit Abandoned Match</button>
+          <button type="button" class="secondary" style="flex:0 0 auto;" onclick="toggleAbandonForm(false)">Cancel</button>
+        </div>
+        <div id="abandonResult" style="margin-top:8px; font-size:13px;"></div>
       </div>
     </div>
   </div>
 
-  <div class="card">
-    <div id="summaryStats" class="muted" style="margin-bottom:10px; font-size:13.5px;"></div>
-    <div id="reportsBox"><p class="muted">Loading...</p></div>
+  <!-- CHECK-IN VIEW -->
+  <div id="checkInView" class="card" style="display:none;">
+    <a href="#" class="back-link" onclick="showLanding(); return false;">← Back</a>
+    <h2 style="margin-top:0; color:var(--navy);">Check In</h2>
+
+    <!-- Appears once both teams have enough players checked in -->
+    <button id="checkInMatchReportBtn" style="display:none; width:100%; margin-bottom:16px;" onclick="showMatchReport()">Match Report</button>
+
+    <div class="section-label" style="text-align:center;">Select a team to begin check-in</div>
+    <div id="teamSelector" style="display:flex; gap:10px; margin-bottom:16px;"></div>
+
+    <div id="activeTeamRoster"></div>
+  </div>
+
+  <!-- MATCH REPORT VIEW -->
+  <div id="matchReportView" class="card" style="display:none;">
+    <a href="#" class="back-link" onclick="showLanding(); return false;">← Back</a>
+    <h2 style="margin-top:0; color:var(--navy);">Match Report</h2>
+
+    <!-- Shown once a report has already been submitted for this game -
+         match reports can never be resubmitted, so this is read-only. -->
+    <div id="reportLockedView" style="display:none;"></div>
+
+    <div id="reportEditableForm">
+      <div class="section-label" style="margin-top:0;">Goals</div>
+      <div class="team-columns" id="scoreGoalColumns" style="margin-bottom:14px;"></div>
+      <div id="goalSlotsList" style="margin-bottom:20px;"></div>
+
+      <div class="report-section">
+        <h4>Yellow Cards</h4>
+        <div id="report-Yellow Card"></div>
+        <button class="secondary add-event-btn" onclick="openMisconductPicker('Yellow Card')">+ Add Yellow Card</button>
+      </div>
+      <div class="report-section">
+        <h4>Red Cards</h4>
+        <div id="report-Red Card"></div>
+        <button class="secondary add-event-btn" onclick="openMisconductPicker('Red Card')">+ Add Red Card</button>
+      </div>
+
+      <div class="report-section">
+        <button class="secondary add-event-btn" id="incidentReportToggleBtn" onclick="toggleIncidentReport()">+ Add Incident Report</button>
+        <div id="incidentReportSection" style="display:none; margin-top:10px;">
+          <div class="section-label" style="margin-top:0;">Incident Report</div>
+          <p class="muted" style="margin-top:-4px;">For anything not covered by an individual card - fights, spectator issues, or other incidents involving the match as a whole.</p>
+          <textarea id="incidentReportText" placeholder="Describe the incident..." style="width:100%; box-sizing:border-box; min-height:140px; padding:10px; border:1px solid var(--border); border-radius:8px; font-size:15px; font-family:inherit;"></textarea>
+        </div>
+      </div>
+
+      <div class="report-section">
+        <div class="section-label" style="margin-top:0;">Does This Game Need Adjustment?</div>
+        <p class="muted" style="margin-top:-4px;">Do any referee crew changes need to be made for this game?</p>
+        <div style="display:flex; gap:16px;">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:400;">
+            <input type="radio" name="crewChangesNeeded" value="yes" />
+            Yes
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:400;">
+            <input type="radio" name="crewChangesNeeded" value="no" checked />
+            No
+          </label>
+        </div>
+      </div>
+
+      <div class="report-section">
+        <div class="section-label" style="margin-top:0;">How Many Officials Were Present?</div>
+        <div style="display:flex; gap:16px;">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:400;">
+            <input type="radio" name="officialsPresent" value="1" />
+            1
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:400;">
+            <input type="radio" name="officialsPresent" value="2" />
+            2
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:400;">
+            <input type="radio" name="officialsPresent" value="3" checked />
+            3
+          </label>
+        </div>
+      </div>
+
+      <button id="submitReportBtn" style="width:100%; margin-top:18px; padding:14px; font-size:15px;" onclick="submitMatchReport()">Submit Match Report</button>
+      <div id="reportSubmitResult" style="margin-top:10px;"></div>
+    </div>
+  </div>
+
+  <!-- MATCH REPORT PLAYER PICKER MODAL -->
+  <div id="reportPickerOverlay" class="modal-overlay" style="display:none;" onclick="if(event.target===this) closeReportPicker()">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="reportPickerTitle">Select</h3>
+        <button class="secondary" onclick="closeReportPicker()">✕</button>
+      </div>
+      <div id="reportPickerList" style="max-height:340px; overflow-y:auto;"></div>
+    </div>
   </div>
 </main>
 
-<div class="box-score-overlay" id="boxScoreOverlay" onclick="if (event.target === this) closeBoxScore();">
-  <div class="box-score-modal">
-    <h3 id="boxScoreTitle"></h3>
-    <p class="muted" id="boxScoreSubtitle"></p>
-    <div class="box-score-cols" id="boxScoreCols"></div>
-    <div id="boxScoreExtra"></div>
-    <button class="box-score-close" onclick="closeBoxScore()">Close</button>
-  </div>
-</div>
-
-<div class="box-score-overlay" id="incidentReportOverlay" onclick="if (event.target === this) closeIncidentReportModal();">
-  <div class="box-score-modal">
-    <h3 id="incidentReportTitle">Incident Report</h3>
-    <p class="muted" id="incidentReportSubtitle"></p>
-    <p id="incidentReportBody" style="white-space:pre-wrap; font-size:14px; margin:0;"></p>
-    <button class="box-score-close" onclick="closeIncidentReportModal()">Close</button>
-  </div>
-</div>
-
-<div class="box-score-overlay" id="kitsOverlay" onclick="if (event.target === this) closeKitsModal();">
-  <div class="box-score-modal kits-modal">
-    <h3 id="kitsTitle"></h3>
-    <p class="muted" id="kitsSubtitle"></p>
-    <div class="kits-teams" id="kitsBody"></div>
-    <p class="muted" style="margin:12px 0 0;">Highlighted options show what each team wears. Defaults: home team in Home, away team in Away, goalkeepers in GK Primary. The kit drawing shows the mixed result. Colors and photos are managed on the <a href="/kits">Team Kits</a> page.</p>
-    <div style="display:flex; align-items:center; gap:12px; margin-top:12px;">
-      <button class="box-score-close" style="margin-top:0;" id="kitsSaveBtn" onclick="saveKitAssignments()">Save for this game</button>
-      <button class="box-score-close" style="margin-top:0; background:#fff; color:var(--navy); border:1px solid var(--border);" onclick="closeKitsModal()">Close</button>
-      <span id="kitsStatus" style="font-size:13px;"></span>
-    </div>
-  </div>
-</div>
-
-<div class="box-score-overlay" id="forfeitDetailsOverlay" onclick="if (event.target === this) closeForfeitDetailsModal();">
-  <div class="box-score-modal">
-    <h3 id="forfeitDetailsTitle"></h3>
-    <p class="muted" id="forfeitDetailsSubtitle"></p>
-    <p id="forfeitDetailsBody" style="white-space:pre-wrap; font-size:14px; margin:0;"></p>
-    <button class="box-score-close" onclick="closeForfeitDetailsModal()">Close</button>
-  </div>
-</div>
 <script>
-  let selectedDivisionIds = new Set(); // multi-select state for the division filter
-  let kitAssignments = {}; // game_id -> team_id -> { outfield_kit, gk_kit } (admin-set per game)
-  let kitsByTeam = {}; // team_id -> { home|away|gk_primary|gk_secondary -> {jersey_color, shorts_color, socks_color, image_url} }
-  let lastLoadedReports = []; // the most recent server response - "Only show games with a report" filters THIS client-side, no re-fetch
+  const params = new URLSearchParams(window.location.search);
+  const gameId = params.get('game');
 
-  async function loadFilterOptions() {
-    const res = await fetch('/api/match-reports/filter-options');
-    const data = await res.json();
-    if (!res.ok) return;
+  let gameData = null;
+  let config = { maxPlayers: 18, maxStaff: 5, minPlayersRequired: 7 };
+  let checkinState = {}; // teamId:profileId -> { jerseyNumber, personType }
 
-    const dropdown = document.getElementById('divisionDropdown');
-    dropdown.innerHTML = (data.divisions || []).map(d => `
-      <label style="display:flex; align-items:center; gap:6px; padding:4px 2px; font-size:13px; white-space:nowrap; cursor:pointer;">
-        <input type="checkbox" value="${escapeHtml(d.division_id)}" onchange="onDivisionCheckboxChange(this)" />
-        ${escapeHtml(d.division_name)}${d.gender ? ' <span class="muted">(' + escapeHtml(d.gender) + ')</span>' : ''}
-      </label>
-    `).join('');
-
-    const teamSelect = document.getElementById('teamFilter');
-    (data.teams || []).forEach(t => {
-      const opt = document.createElement('option');
-      opt.value = t.team_id;
-      opt.textContent = t.team_name;
-      teamSelect.appendChild(opt);
-    });
+  function showError(msg) {
+    document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('errorState').style.display = 'block';
+    document.getElementById('errorText').textContent = msg;
   }
 
-  function toggleDivisionDropdown() {
-    const dropdown = document.getElementById('divisionDropdown');
-    dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+  function showLanding() {
+    document.getElementById('checkInView').style.display = 'none';
+    document.getElementById('matchReportView').style.display = 'none';
+    closeReportPicker(); // force-close in case a picker modal was left open
+    document.getElementById('landingView').style.display = 'block';
   }
 
-  // Close the dropdown when clicking anywhere outside it
-  document.addEventListener('click', (e) => {
-    const dropdown = document.getElementById('divisionDropdown');
-    const btn = document.getElementById('divisionFilterBtn');
-    if (dropdown && !dropdown.contains(e.target) && e.target !== btn) {
-      dropdown.style.display = 'none';
-    }
-  });
-
-  function onDivisionCheckboxChange(checkbox) {
-    if (checkbox.checked) selectedDivisionIds.add(checkbox.value);
-    else selectedDivisionIds.delete(checkbox.value);
-
-    const btn = document.getElementById('divisionFilterBtn');
-    btn.textContent = selectedDivisionIds.size === 0
-      ? 'All Divisions'
-      : selectedDivisionIds.size + ' division' + (selectedDivisionIds.size === 1 ? '' : 's') + ' selected';
-  }
-
-  // Keeps "All Conferences" and the specific conferences mutually
-  // exclusive in the multi-select - picking "All" clears any specific
-  // ones (ctrl/cmd-clicking each one to deselect it is fiddly), and
-  // picking a specific one deselects "All".
-  function onConferenceFilterChange() {
-    const select = document.getElementById('conferenceFilter');
-    const options = [...select.options];
-    const allOption = options.find(o => o.value === '');
-    if (allOption.selected) {
-      options.forEach(o => { if (o.value !== '') o.selected = false; });
-    } else {
-      allOption.selected = false;
-    }
-  }
-
-  // "Today" fills both date inputs with today's date in Eastern time (not
-  // the browser's local time) - games are keyed to Eastern days everywhere
-  // else in this app (see getEasternDayBounds server-side), so this stays
-  // consistent with that rather than drifting a day off for anyone not in
-  // Eastern time.
-  function todayDateStringEastern() {
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
-    const y = parts.find(p => p.type === 'year').value;
-    const m = parts.find(p => p.type === 'month').value;
-    const d = parts.find(p => p.type === 'day').value;
-    return `${y}-${m}-${d}`;
-  }
-
-  function setDateRangeToToday() {
-    const today = todayDateStringEastern();
-    document.getElementById('dateFrom').value = today;
-    document.getElementById('dateTo').value = today;
-    loadReports();
-  }
-
-  // Purely client-side - filters the already-loaded data, no re-fetch.
-  function applyReportFilterAndRender() {
-    const status = document.getElementById('reportStatusFilter').value;
-    // Tournament mode narrows the loaded set by the day / gender / tier
-    // buttons first; everything below (and the summary counts) then works on
-    // that narrowed set.
-    const baseRows = TOURNAMENT ? tournamentFilteredRows() : lastLoadedReports;
-    let filtered = baseRows;
-    if (status === 'has_report') filtered = baseRows.filter(r => r.has_report);
-    else if (status === 'upcoming') filtered = baseRows.filter(r => isUpcoming(r));
-    // The "MO report reviewed" flag (flagged_external) is no longer shown or
-    // editable in the UI; it is still stored in the db and returned by the API.
-    else if (status === 'no_report_registered') filtered = baseRows.filter(r => !r.has_report && !isUpcoming(r));
-    renderSummaryStats(baseRows);
-    renderReports(filtered);
-  }
-
-  // A game that hasn't kicked off yet and has no report - shown as "Upcoming"
-  // instead of "No USCCS Report" (only really happens in tournament mode,
-  // where future games are listed too).
-  function isUpcoming(r) {
-    // Not yet "complete": no report and less than 2 hours since kickoff
-    // (covers games still to be played and games in progress). Grey until
-    // then; after that, a missing report turns red.
-    return !r.has_report && !!r.game_date && new Date(r.game_date).getTime() + 2 * 60 * 60 * 1000 > Date.now();
-  }
-
-  // ---- Tournament mode (window.TOURNAMENT_CONFIG is set by the server) -----
-  const TOURNAMENT = window.TOURNAMENT_CONFIG || null;
-  const tSel = { day: 'all', gender: '', tier: '' };
-
-  function easternDateOf(iso) {
-    if (!iso) return null;
-    return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-  }
-
-  function tournamentFilteredRows() {
-    let rows = lastLoadedReports;
-    if (tSel.day !== 'all') rows = rows.filter(r => easternDateOf(r.game_date) === tSel.day);
-    if (tSel.gender) rows = rows.filter(r => r.gender === tSel.gender);
-    if (tSel.tier) rows = rows.filter(r => (r.tier || 'Unassigned') === tSel.tier);
-    return rows;
-  }
-
-  function setTournamentFilter(kind, value) {
-    tSel[kind] = value;
-    // Women have Gold and Silver only; drop a Bronze selection if it no longer applies.
-    if (tSel.gender === 'Women' && tSel.tier === 'Bronze') tSel.tier = '';
-    renderTournamentBar();
-    applyReportFilterAndRender();
-  }
-
-  function renderTournamentBar() {
-    if (!TOURNAMENT) return;
-    const seg = (items, kind, current) => items.map(it =>
-      `<button type="button" class="${current === it.value ? 'on' : ''}" onclick="setTournamentFilter('${kind}', '${it.value}')">${it.html}</button>`).join('');
-    const dayItems = [{ value: 'all', html: 'All Days' }].concat(TOURNAMENT.days.map(d => ({
-      value: d.date, html: `${escapeHtml(d.label)}<small>${escapeHtml(d.date.slice(5).replace('-', '/'))}</small>`,
-    })));
-    document.getElementById('tDayButtons').innerHTML = seg(dayItems, 'day', tSel.day);
-    document.getElementById('tGenderButtons').innerHTML = seg([
-      { value: '', html: 'All' }, { value: 'Men', html: 'Men' }, { value: 'Women', html: 'Women' },
-    ], 'gender', tSel.gender);
-    // Men: Gold / Silver / Bronze. Women: Gold / Silver. "Unassigned" only
-    // appears if some loaded game's division has no tier yet.
-    const tiers = tSel.gender === 'Women' ? TOURNAMENT.tiers.Women : TOURNAMENT.tiers.Men;
-    const tierItems = [{ value: '', html: 'All' }].concat(tiers.map(t => ({ value: t, html: t })));
-    if (lastLoadedReports.some(r => !r.tier)) tierItems.push({ value: 'Unassigned', html: 'Unassigned' });
-    document.getElementById('tTierButtons').innerHTML = seg(tierItems, 'tier', tSel.tier);
-  }
-
-  function initTournamentUi() {
-    if (!TOURNAMENT) return;
-    document.getElementById('pageTitle').textContent = TOURNAMENT.name + ' — Match Reports';
-    document.title = TOURNAMENT.name + ' — Match Reports';
-    document.getElementById('tournamentNavLink').style.display = '';
-    document.getElementById('tournamentBar').style.display = '';
-    // The season filters (conference, division, team, gender dropdown, dates)
-    // don't apply here - the day / gender / division buttons replace them.
-    document.getElementById('seasonDateRow').style.display = 'none';
-    ['conferenceFilter', 'divisionFilterBtn', 'teamFilter', 'genderFilter'].forEach(id => {
-      document.getElementById(id).closest('.field').style.display = 'none';
-    });
-    const showSel = document.getElementById('reportStatusFilter');
-    showSel.insertAdjacentHTML('beforeend', '<option value="upcoming">Upcoming</option>');
-    // Start on today's tournament day if it is one, otherwise the first day.
-    const today = easternDateOf(new Date().toISOString());
-    tSel.day = TOURNAMENT.days.some(d => d.date === today) ? today : (TOURNAMENT.days[0] ? TOURNAMENT.days[0].date : 'all');
-    renderTournamentBar();
-    // Live scoring: refresh every 2 minutes, skipping the refresh while a
-    // popup is open so it is never pulled out from under someone.
-    setInterval(() => {
-      if (document.querySelector('.box-score-overlay.open')) return;
-      loadReports();
-    }, 120000);
-  }
-
-  // Summary counts are always over the FULL loaded set, regardless of
-  // which filter is currently applied - so the numbers stay stable as a
-  // reference point while browsing different filtered views.
-  // The two counts partition the full set exactly, so they always add up
-  // to totalGames.
-  function renderSummaryStats(rows) {
-    rows = rows || lastLoadedReports;
-    const totalGames = rows.length;
-    const usccsReport = rows.filter(r => r.has_report).length;
-    const upcoming = rows.filter(r => isUpcoming(r)).length;
-    const noReport = rows.filter(r => !r.has_report && !isUpcoming(r)).length;
-    // "Upcoming" only exists as a separate count in tournament mode (the
-    // season view never lists future games), so the season line is unchanged.
-    document.getElementById('summaryStats').innerHTML = `
-      <strong>${totalGames}</strong> total games &nbsp;·&nbsp;
-      <strong>${usccsReport}</strong> USCCS report &nbsp;·&nbsp;
-      ${TOURNAMENT ? `<strong>${upcoming}</strong> upcoming &nbsp;·&nbsp;` : ''}
-      <strong>${noReport}</strong> no USCCS report
-    `;
-  }
-
-  async function loadReports() {
-    const box = document.getElementById('reportsBox');
-    const params = new URLSearchParams();
-    const team = document.getElementById('teamFilter').value;
-    const gender = document.getElementById('genderFilter').value;
-    const dateFrom = document.getElementById('dateFrom').value;
-    const dateTo = document.getElementById('dateTo').value;
-    if (selectedDivisionIds.size > 0) params.set('division', [...selectedDivisionIds].join(','));
-    // "All Conferences" has value "" - filtered out here so it never gets
-    // sent as a literal empty conference; selecting it (see
-    // onConferenceFilterChange) already clears every specific selection,
-    // so no filter being sent is exactly what "All" means.
-    const selectedConferences = [...document.getElementById('conferenceFilter').selectedOptions].map(o => o.value).filter(Boolean);
-    if (selectedConferences.length > 0) params.set('conference', selectedConferences.join(','));
-    if (team) params.set('team', team);
-    if (gender) params.set('gender', gender);
-    if (dateFrom) params.set('dateFrom', dateFrom);
-    if (dateTo) params.set('dateTo', dateTo);
-    try {
-      const res = await fetch('/api/match-reports?' + params.toString());
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Unknown error');
-      lastLoadedReports = data.reports || [];
-      kitsByTeam = data.kits_by_team || {};
-      kitAssignments = data.kit_assignments || {};
-      renderTournamentBar();
-      applyReportFilterAndRender();
-    } catch (e) {
-      box.innerHTML = '<div class="err-box">Failed to load: ' + escapeHtml(e.message) + '</div>';
-    }
-  }
-
-  function cardCount(count, colorClass) {
-    if (!count || count <= 0) return ''; // blank, not "0" - keeps zero-card games uncluttered
-    return `<span class="card-count ${colorClass}">${count}</span>`;
-  }
-
-  // Same highlight color rule shared by the table row and the mobile card,
-  // checked top-down - the first match wins:
-  //   1. A real USCCS report in our own db always wins - white, no matter
-  //      what any flag says.
-  //   2. Otherwise, "MO report reviewed" manually checked - yellow, whole
-  //      row.
-  //   3. Otherwise, a score pulled from the SportsEngine sync (or "SE
-  //      manual score entry" checked) - red row, but just the score cell
-  //      itself highlighted yellow (see scoreCellHtml / mobileScoreLineHtml).
-  //   4. Otherwise (no score, no report, no flag) - red, nothing else
-  //      highlighted.
-  function rowBgColor(r) {
-    if (r.is_forfeit) return '#F4F6FA';
-    if (r.has_report) return null;
-    if (isUpcoming(r)) return '#F4F6FA'; // not played yet - neutral, not "missing"
-    return '#FBEAE8';
-  }
-
-  // Officials count + crew-change answer submitted on the matchday report form.
-  // Desktop table column only. The whole box turns red when the crew was short
-  // (1 or 2 officials) or a crew change is needed, so it stands out.
-  function crewInfoHtml(r) {
-    if (!r.has_report || r.is_forfeit) return '';
-    if (r.officials_present == null && r.crew_changes_needed == null) return '';
-    const shortCrew = r.officials_present != null && r.officials_present <= 2;
-    const needsChange = !!r.crew_changes_needed;
-    const alert = shortCrew || needsChange;
-    const box = alert
-      ? 'background:#F8D7D3; border:1.5px solid var(--danger); color:var(--danger); font-weight:700;'
-      : 'background:#fff; border:1px solid var(--border); color:var(--gray);';
-    return `<div style="${box} border-radius:6px; padding:6px 9px; font-size:12px; white-space:nowrap; line-height:1.5;">
-      <div>Officials: ${r.officials_present != null ? r.officials_present : '—'}</div>
-      <div>Crew change: ${needsChange ? 'Yes' : 'No'}</div>
-    </div>`;
-  }
-
-  function reasonLabelFor(r) {
-    return r.forfeit_reason ? r.forfeit_reason.charAt(0).toUpperCase() + r.forfeit_reason.slice(1) : null;
-  }
-
-  // Plain "3 - 1" text (no markup) - shared by the table's Score cell and
-  // the mobile card's centered score line.
-  function scoreText(r) {
-    if (r.is_forfeit) {
-      // Only a FORFEIT shows a score (ours, else SportsEngine's), with the label
-      // below it. Abandoned and Postponed games show just their label - no score.
-      if (r.forfeit_reason !== 'forfeit') return reasonLabelFor(r);
-      if (r.team1_score != null && r.team2_score != null) return r.team1_score + ' - ' + r.team2_score;
-      if (r.se_home_score != null && r.se_away_score != null) return r.se_home_score + ' - ' + r.se_away_score;
-      return '—';
-    }
-    if (r.has_report) return r.team1_score + ' - ' + r.team2_score;
-    if (r.se_home_score != null && r.se_away_score != null) return r.se_home_score + ' - ' + r.se_away_score;
-    return '—';
-  }
-
-  // Desktop table's Score cell - same top-down priority as rowBgColor:
-  // 1. A real report, or 2. "MO report reviewed" checked - plain text (the
-  //    row itself is already white or yellow; nothing extra on the score).
-  // 3. A SportsEngine/MO score (from the sync) or "SE manual score entry"
-  //    checked - just the score gets a yellow highlight, row stays red.
-  // 4. Otherwise plain (row is already red).
-  // Small reason label (Forfeit / Postponed / Abandoned) shown below a forfeit game's score.
-  function forfeitLabelHtml(r) {
-    return `<div class="muted" style="font-weight:700; font-size:10.5px; text-transform:uppercase; letter-spacing:.03em; margin-top:2px;">${escapeHtml(reasonLabelFor(r) || 'Forfeit')}</div>`;
-  }
-
-  function scoreCellHtml(r) {
-    const text = escapeHtml(scoreText(r));
-    if (r.is_forfeit) return r.forfeit_reason === 'forfeit' ? text + forfeitLabelHtml(r) : text;
-    if (r.has_report) return text;
-    if (r.se_home_score != null && r.se_away_score != null) {
-      return `<span style="background:#FFF6D6; padding:2px 6px; border-radius:4px;">${text}</span><div class="muted" style="font-weight:400; font-size:10px; margin-top:2px;">(from SE/MO)</div>`;
-    }
-    if (r.se_manual_entry) {
-      return `<span style="background:#FFF6D6; padding:2px 6px; border-radius:4px;">${text}</span>`;
-    }
-    return text;
-  }
-
-  // A Box Score button below the score, opening the events modal - only
-  // meaningful once a real report exists (forfeits and not-yet-reported
-  // games have no events to show).
-  function boxScoreButtonHtml(r) {
-    if (!r.has_report || r.is_forfeit) return '';
-    return `<button class="push-score-btn" style="margin-top:6px;" onclick="openBoxScore('${escapeJs(r.game_id)}')">Box Score</button>`;
-  }
-
-  // Who gets charged for a forfeit/postponed/abandoned game - independent of
-  // both the reason itself and the referee-paid decision (see
-  // set-charge-status), so it gets its own select same as those. Blank for
-  // any game that isn't flagged forfeit/postponed/abandoned - nothing to
-  // charge for a game that was actually played or hasn't happened yet.
-  function chargeStatusHtml(r) {
-    if (!r.is_forfeit) return '';
-    const opt = (value, label) => `<option value="${value}" ${r.charge_status === (value || null) ? 'selected' : ''}>${label}</option>`;
-    return `
-      <select onchange="setChargeStatus('${escapeJs(r.game_id)}', this.value)" style="font-size:11.5px; padding:3px 5px; border:1px solid var(--border); border-radius:5px;">
-        ${opt('', '—')}
-        ${opt('teams_charged', 'Teams Charged')}
-        ${opt('usccs_charged', 'USCCS Charged')}
-        ${opt('no_charge', 'No Charge')}
-      </select>
-    `;
-  }
-
-  // Mobile card's score line - same top-down priority as rowBgColor:
-  // 1. A real report - the "-" becomes the Box Score trigger itself,
-  //    "3 [Box Score] 1" in place of "3 - 1" - plain/white, no highlight.
-  // 2. "MO report reviewed" checked - plain (the card is already yellow).
-  // 3. A SportsEngine/MO score (from the sync) or "SE manual score entry"
-  //    checked - just this score line highlighted yellow, card stays red.
-  // 4. Otherwise plain (the card is already red, nothing more to show).
-  // Forfeits keep the plain reason text throughout (no score at all).
-  function mobileScoreLineHtml(r) {
-    if (r.has_report && !r.is_forfeit) {
-      // A real report is the truth - plain/white regardless of either flag.
-      return `${escapeHtml(String(r.team1_score))} <a href="#" onclick="openBoxScore('${escapeJs(r.game_id)}'); return false;" style="color:var(--navy); text-decoration:underline;">Box Score</a> ${escapeHtml(String(r.team2_score))}`;
-    }
-    if (r.is_forfeit) return escapeHtml(scoreText(r)) + (r.forfeit_reason === 'forfeit' ? forfeitLabelHtml(r) : '');
-    if (r.se_home_score != null && r.se_away_score != null) {
-      return `<span style="background:#FFF6D6; padding:2px 6px; border-radius:4px;">${escapeHtml(scoreText(r))}</span><div class="muted" style="font-weight:400; font-size:10px; margin-top:2px;">(from SE/MO)</div>`;
-    }
-    if (r.se_manual_entry) {
-      return `<span style="background:#FFF6D6; padding:2px 6px; border-radius:4px;">${escapeHtml(scoreText(r))}</span>`;
-    }
-    return escapeHtml(scoreText(r));
-  }
-
-  // Shared between the table's Actions column and the mobile card's
-  // actions area - same behavior either way, but `compact` (mobile only)
-  // lays the forfeit/no-report controls out on one flex-wrapped line
-  // instead of stacked, to save vertical space in the card.
-  // Clickable "box" preview of the forfeit/postponed/abandoned notes
-  // (truncated to one line) that opens the full text in a modal, same
-  // pattern as Incident Report - rather than dumping the whole note inline
-  // into the row/card. Nothing rendered at all if there are no notes to
-  // show (e.g. an admin-set Forfeit/Postponed with no notes entered).
-  function forfeitDetailsBoxHtml(r, compact) {
-    if (!r.forfeit_notes) return '';
-    const label = reasonLabelFor(r) || 'Forfeit';
-    return `
-      <button onclick="openForfeitDetailsModal('${escapeJs(r.game_id)}')" style="display:block; width:100%; max-width:230px; box-sizing:border-box; overflow:hidden; text-align:left; margin-top:${compact ? '6' : '8'}px; padding:7px 10px; background:#fff; border:1px solid var(--border); border-radius:6px; font-size:${compact ? '11' : '11.5'}px; cursor:pointer; font-family:inherit;">
-        <strong>📋 ${escapeHtml(label)}</strong>
-        <div class="muted" style="margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(r.forfeit_notes)}</div>
-      </button>
-    `;
-  }
-
-  // Small note on a game whose earlier Forfeit/Postponed/Abandoned flag went
-  // stale because SportsEngine reused its ID for a rescheduled game (the
-  // flag was pinned to the original start time) - the flag itself is kept
-  // server-side as history, so this just tells admins it happened.
-  function previousForfeitNoteHtml(r) {
-    if (!r.previous_forfeit) return '';
-    const label = r.previous_forfeit.reason ? r.previous_forfeit.reason.charAt(0).toUpperCase() + r.previous_forfeit.reason.slice(1) : 'Flagged';
-    const when = r.previous_forfeit.original_start_time
-      ? new Date(r.previous_forfeit.original_start_time).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' }) + ' ET'
-      : 'earlier date';
-    return `<div class="muted" style="font-size:10.5px; margin-top:3px;">Rescheduled - previously ${escapeHtml(label)} (${escapeHtml(when)})</div>`;
-  }
-
-  function actionsHtml(r, compact) {
-    if (r.is_forfeit) {
-      if (compact) {
-        return `
-          <div style="display:flex; align-items:center; justify-content:center; gap:6px; flex-wrap:wrap;">
-            <select onchange="toggleForfeitFlag('${escapeJs(r.game_id)}', this.value)" style="font-size:11px; padding:2px 4px; border:1px solid var(--border); border-radius:5px;">
-              <option value="forfeit" ${r.forfeit_reason === 'forfeit' ? 'selected' : ''}>Forfeit</option>
-              <option value="postponed" ${r.forfeit_reason === 'postponed' ? 'selected' : ''}>Postponed</option>
-              <option value="abandoned" ${r.forfeit_reason === 'abandoned' ? 'selected' : ''}>Abandoned</option>
-              <option value="">— Clear —</option>
-            </select>
-            <span class="muted">Pay ref?</span>
-            <select onchange="setRefereePaid('${escapeJs(r.game_id)}', this.value)" style="font-size:11px; padding:2px 4px; border:1px solid var(--border); border-radius:5px;">
-              <option value="" ${r.referee_paid == null ? 'selected' : ''}>—</option>
-              <option value="true" ${r.referee_paid === true ? 'selected' : ''}>Yes</option>
-              <option value="false" ${r.referee_paid === false ? 'selected' : ''}>No</option>
-            </select>
-            <span class="muted">Charge?</span>
-            <select onchange="setChargeStatus('${escapeJs(r.game_id)}', this.value)" style="font-size:11px; padding:2px 4px; border:1px solid var(--border); border-radius:5px;">
-              <option value="" ${r.charge_status == null ? 'selected' : ''}>—</option>
-              <option value="teams_charged" ${r.charge_status === 'teams_charged' ? 'selected' : ''}>Teams Charged</option>
-              <option value="usccs_charged" ${r.charge_status === 'usccs_charged' ? 'selected' : ''}>USCCS Charged</option>
-              <option value="no_charge" ${r.charge_status === 'no_charge' ? 'selected' : ''}>No Charge</option>
-            </select>
-          </div>
-          ${forfeitDetailsBoxHtml(r, true)}
-          ${r.incident_report ? `<button class="push-score-btn" style="margin-top:4px;" onclick="openIncidentReportModal('${escapeJs(r.game_id)}')">View Incident Report</button>` : ''}
-        `;
-      }
-      return `
-        <select onchange="toggleForfeitFlag('${escapeJs(r.game_id)}', this.value)" style="font-size:11.5px; padding:3px 5px; border:1px solid var(--border); border-radius:5px;">
-          <option value="forfeit" ${r.forfeit_reason === 'forfeit' ? 'selected' : ''}>Forfeit</option>
-          <option value="postponed" ${r.forfeit_reason === 'postponed' ? 'selected' : ''}>Postponed</option>
-          <option value="abandoned" ${r.forfeit_reason === 'abandoned' ? 'selected' : ''}>Abandoned</option>
-          <option value="">— Clear —</option>
-        </select>
-        <div style="margin-top:5px; display:flex; align-items:center; gap:5px; font-size:11.5px;">
-          <span class="muted">Pay ref?</span>
-          <select onchange="setRefereePaid('${escapeJs(r.game_id)}', this.value)" style="font-size:11.5px; padding:2px 4px; border:1px solid var(--border); border-radius:5px;">
-            <option value="" ${r.referee_paid == null ? 'selected' : ''}>—</option>
-            <option value="true" ${r.referee_paid === true ? 'selected' : ''}>Yes</option>
-            <option value="false" ${r.referee_paid === false ? 'selected' : ''}>No</option>
-          </select>
-        </div>
-        <div style="margin-top:5px; display:flex; align-items:center; gap:5px; font-size:11.5px;">
-          <span class="muted">Charge?</span>
-          <select onchange="setChargeStatus('${escapeJs(r.game_id)}', this.value)" style="font-size:11.5px; padding:2px 4px; border:1px solid var(--border); border-radius:5px;">
-            <option value="" ${r.charge_status == null ? 'selected' : ''}>—</option>
-            <option value="teams_charged" ${r.charge_status === 'teams_charged' ? 'selected' : ''}>Teams Charged</option>
-            <option value="usccs_charged" ${r.charge_status === 'usccs_charged' ? 'selected' : ''}>USCCS Charged</option>
-            <option value="no_charge" ${r.charge_status === 'no_charge' ? 'selected' : ''}>No Charge</option>
-          </select>
-        </div>
-        ${forfeitDetailsBoxHtml(r, false)}
-        ${r.incident_report ? `<button class="push-score-btn" style="margin-top:6px;" onclick="toggleIncidentReport('${escapeJs(r.game_id)}')">View Incident Report</button>` : ''}
-      `;
-    }
-    if (r.has_report) {
-      // Push Score to SE is left out of the compact (mobile) actions -
-      // that's a desktop-workflow action, kept only in the table's Actions
-      // column. (View Incident Report is left out here too: it toggles a
-      // row that lives inside the table, which is hidden on mobile, so it
-      // wouldn't actually show anything.)
-      if (compact && !TOURNAMENT) return '';
-      return `
-        <button class="push-score-btn" onclick="pushScore('${escapeJs(r.game_id)}', this)">Push Score to SE</button>
-        <span class="push-score-result" style="display:block; font-size:11px; margin-top:3px;"></span>
-        ${r.incident_report ? `<button class="push-score-btn" style="margin-top:4px;" onclick="toggleIncidentReport('${escapeJs(r.game_id)}')">View Incident Report</button>` : ''}
-      `;
-    }
-    if (compact) {
-      return `
-        <div style="display:flex; align-items:center; justify-content:center; gap:6px; flex-wrap:wrap;">
-          <span class="muted">${isUpcoming(r) ? 'Upcoming' : 'No USCCS Report'}</span>
-          <span class="muted">|</span>
-          <select onchange="toggleForfeitFlag('${escapeJs(r.game_id)}', this.value)" style="font-size:11px; padding:2px 4px; border:1px solid var(--border); border-radius:5px;">
-            <option value="" selected>Forfeit/Postponed/Abandoned?</option>
-            <option value="forfeit">Forfeit</option>
-            <option value="postponed">Postponed</option>
-            <option value="abandoned">Abandoned</option>
-          </select>
-        </div>
-        ${previousForfeitNoteHtml(r)}
-      `;
-    }
-    return `
-      <span class="muted" style="font-size:12px; display:block;">${isUpcoming(r) ? 'Upcoming' : 'No USCCS Report'}</span>
-      ${previousForfeitNoteHtml(r)}
-      <select onchange="toggleForfeitFlag('${escapeJs(r.game_id)}', this.value)" style="font-size:11.5px; padding:3px 5px; margin-top:4px; border:1px solid var(--border); border-radius:5px;">
-        <option value="" selected>Forfeit/Postponed/Abandoned?</option>
-        <option value="forfeit">Forfeit</option>
-        <option value="postponed">Postponed</option>
-        <option value="abandoned">Abandoned</option>
-      </select>
-    `;
-  }
-
-  function renderReports(reports) {
-    const box = document.getElementById('reportsBox');
-    if (!reports.length) {
-      box.innerHTML = '<p class="muted">No games match these filters.</p>';
+  async function init() {
+    if (!gameId) {
+      showError('No ?game=<uid> parameter in the URL.');
       return;
     }
-    box.innerHTML = `
-      <div class="table-wrap" style="overflow-x:auto;">
-      <table>
-        <thead><tr>
-          <th>Match Report</th><th>Game Date</th><th>Division</th>
-          <th style="text-align:right;">Team 1</th><th style="text-align:center;">YC</th><th style="text-align:center;">RC</th>
-          <th style="text-align:center;">Score</th>
-          <th style="text-align:center;">RC</th><th style="text-align:center;">YC</th><th>Team 2</th>${TOURNAMENT ? '' : '<th>Actions</th><th>Officials / Crew</th>'}
-        </tr></thead>
-        <tbody>
-          ${reports.map(r => {
-            const bg = rowBgColor(r);
-            const rowStyle = bg ? ` style="background:${bg};"` : '';
-            return `
-            <tr${rowStyle}>
-              <td style="font-size:11.5px; white-space:nowrap;">${r.game_id ? `<a href="https://octopus-app-ilp92.ondigitalocean.app/?game=${encodeURIComponent(r.game_id)}" target="_blank" rel="noopener" style="color:var(--navy);">Match Report URL</a>` : '—'}<div><a href="#" class="kits-link" onclick="openKitsModal('${escapeJs(r.game_id)}'); return false;">Kits</a></div></td>
-              <td>${r.game_date ? new Date(r.game_date).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' }) + ' ET' : '—'}</td>
-              <td>${escapeHtml(r.division_name || '')}<div class="muted" style="font-size:11.5px;">${escapeHtml(r.gender || '')}</div></td>
-              <td style="text-align:right;">${escapeHtml(r.team1_name)}${miniKitHtml(r, 1)}</td>
-              <td style="text-align:center;">${r.is_forfeit ? '' : cardCount(r.team1_yellow_count, 'yc-count')}</td>
-              <td style="text-align:center;">${r.is_forfeit ? '' : cardCount(r.team1_red_count, 'rc-count')}</td>
-              <td style="text-align:center; font-weight:700; white-space:nowrap;">
-                ${scoreCellHtml(r)}
-                <div>${boxScoreButtonHtml(r)}</div>
-              </td>
-              <td style="text-align:center;">${r.is_forfeit ? '' : cardCount(r.team2_red_count, 'rc-count')}</td>
-              <td style="text-align:center;">${r.is_forfeit ? '' : cardCount(r.team2_yellow_count, 'yc-count')}</td>
-              <td>${miniKitHtml(r, 2)}${escapeHtml(r.team2_name)}</td>
-              ${TOURNAMENT ? '' : `<td>${actionsHtml(r)}</td><td>${crewInfoHtml(r)}</td>`}
-            </tr>
-            ${r.incident_report ? `
-            <tr id="incident-row-${escapeJs(r.game_id)}" style="display:none;">
-              <td colspan="${TOURNAMENT ? 10 : 12}" style="background:var(--bg); font-size:13px;">
-                <strong>Incident Report:</strong>
-                <div style="white-space:pre-wrap; margin-top:4px;">${escapeHtml(r.incident_report)}</div>
-              </td>
-            </tr>
-            ` : ''}
-          `;
-          }).join('')}
-        </tbody>
-      </table>
-      </div>
 
-      <div class="mr-cards">
-        ${reports.map(r => {
-          const bg = rowBgColor(r);
-          return `
-          <div class="mr-card"${bg ? ` style="background:${bg};"` : ''}>
-            <a class="mr-card-report-link" href="${r.game_id ? 'https://octopus-app-ilp92.ondigitalocean.app/?game=' + encodeURIComponent(r.game_id) : '#'}" target="_blank" rel="noopener">${r.game_id ? 'Match Report URL' : '—'}</a>
-            <div class="mr-card-meta" style="margin-top:0;"><a href="#" class="kits-link" onclick="openKitsModal('${escapeJs(r.game_id)}'); return false;">Kits</a></div>
-            <div class="mr-card-meta">${r.game_date ? new Date(r.game_date).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' }) + ' ET' : '—'} · ${escapeHtml(r.gender || '')} · ${escapeHtml(r.division_name || '')}${!r.has_report && !r.is_forfeit && r.se_home_score != null && r.se_away_score != null ? ' · (score from SE/MO)' : ''}</div>
-            <div class="mr-card-teams">
-              <div class="mr-card-team">${escapeHtml(r.team1_name)}${miniKitHtml(r, 1)}</div>
-              ${!r.is_forfeit ? `<div class="mr-card-cards">${cardCount(r.team1_yellow_count, 'yc-count')}${cardCount(r.team1_red_count, 'rc-count')}</div>` : ''}
-              <div class="mr-card-score-inline">${mobileScoreLineHtml(r)}</div>
-              ${!r.is_forfeit ? `<div class="mr-card-cards">${cardCount(r.team2_yellow_count, 'yc-count')}${cardCount(r.team2_red_count, 'rc-count')}</div>` : ''}
-              <div class="mr-card-team">${miniKitHtml(r, 2)}${escapeHtml(r.team2_name)}</div>
+    try {
+      const [configRes, gameRes] = await Promise.all([
+        fetch('/api/config').then(r => r.json()),
+        fetch('/api/game/' + encodeURIComponent(gameId)).then(r => r.json()),
+      ]);
+
+      if (gameRes.error) { showError(gameRes.error); return; }
+
+      config = configRes;
+      gameData = gameRes;
+      if (gameData.nationalTournament) {
+        // National Tournament: no score push to SportsEngine; simpler wording.
+        const b2 = document.getElementById('submitReportBtn'); if (b2) b2.textContent = 'Submit Report';
+      }
+
+      await loadCheckinState();
+      await loadMatchReportState();
+
+      document.getElementById('loadingState').style.display = 'none';
+      document.getElementById('landingView').style.display = 'block';
+
+      const teamNames = (gameData.event.eventTeams || []).map(t => t.name).join(' vs ');
+      const teams = gameData.teams || [];
+      if (teams.length === 2) {
+        document.getElementById('gameTitle').innerHTML = `
+          <div style="display:flex; align-items:center; justify-content:center; gap:14px;">
+            <div style="flex:1; min-width:0; text-align:center;">
+              ${teams[0].logoUrl ? `<img src="${escapeHtml(teams[0].logoUrl)}" alt="" style="width:44px; height:44px; object-fit:contain; display:block; margin:0 auto 6px;" onerror="this.style.display='none'" />` : ''}
+              <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:clamp(11px, 3.2vw, 15px); font-weight:600; color:var(--navy);" title="${escapeHtml(teams[0].name)}">${escapeHtml(teams[0].name)}</div>
+              ${teamKitsHtml(teams[0])}
             </div>
-            ${r.incident_report && !r.is_forfeit ? `<div class="mr-card-incident-row"><button class="push-score-btn" onclick="openIncidentReportModal('${escapeJs(r.game_id)}')">View Incident Report</button></div>` : ''}
-            <div class="mr-card-actions">${actionsHtml(r, true)}</div>
+            <div class="muted" style="font-size:13px; flex-shrink:0;">vs</div>
+            <div style="flex:1; min-width:0; text-align:center;">
+              ${teams[1].logoUrl ? `<img src="${escapeHtml(teams[1].logoUrl)}" alt="" style="width:44px; height:44px; object-fit:contain; display:block; margin:0 auto 6px;" onerror="this.style.display='none'" />` : ''}
+              <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:clamp(11px, 3.2vw, 15px); font-weight:600; color:var(--navy);" title="${escapeHtml(teams[1].name)}">${escapeHtml(teams[1].name)}</div>
+              ${teamKitsHtml(teams[1])}
+            </div>
           </div>
         `;
-        }).join('')}
-      </div>
-    `;
+      } else {
+        document.getElementById('gameTitle').textContent = gameData.event.name || teamNames || 'Untitled Game';
+      }
+      const startStr = gameData.event.start ? new Date(gameData.event.start).toLocaleString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }) : '';
+      const genderStr = teams[0] && teams[0].gender ? teams[0].gender : '';
+      document.getElementById('gameSubtitle').innerHTML = [startStr, genderStr, gameData.event.location && gameData.event.location.name].filter(Boolean).map(escapeHtml).join('<br>');
+
+      updateMatchReportGate();
+      renderAbandonUi();
+    } catch (e) {
+      showError('Failed to load: ' + e.message);
+    }
   }
 
-  // Match events for the box score modal - home (Team 1) on the left,
-  // away (Team 2) on the right, sorted by minute (nulls last, same as the
-  // server-side ordering).
-  function openBoxScore(gameId) {
-    const r = lastLoadedReports.find(x => x.game_id === gameId);
-    if (!r) return;
+  let teamDoneState = {}; // teamId -> boolean, now persisted server-side via /api/checkin-complete
 
-    document.getElementById('boxScoreTitle').textContent = r.team1_name + ' vs ' + r.team2_name;
-    document.getElementById('boxScoreSubtitle').textContent =
-      (r.game_date ? new Date(r.game_date).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short' }) + ' ET' : '') +
-      ' — Final: ' + scoreText(r);
+  async function loadCheckinState() {
+    const res = await fetch('/api/checkins/' + encodeURIComponent(gameId));
+    const data = await res.json();
+    checkinState = {};
+    (data.checkins || []).forEach(c => {
+      checkinState[c.team_id + ':' + c.profile_id] = { jerseyNumber: c.jersey_number, personType: c.person_type, name: c.name };
+    });
+    teamDoneState = {};
+    (data.completedTeamIds || []).forEach(teamId => { teamDoneState[teamId] = true; });
+  }
 
-    const eventLine = (e) => {
-      const icon = e.event_type === 'Goal' ? '⚽' : e.event_type === 'Red Card' ? '🟥' : '🟨';
-      const minute = e.minute != null ? e.minute + "'" : '';
-      const reason = (e.event_type !== 'Goal' && e.reason) ? ' — ' + escapeHtml(e.reason) : (e.reason === 'Own Goal' ? ' (Own Goal)' : '');
-      return `<div class="box-score-event"><span>${icon}</span><span>${escapeHtml(e.name)}${reason}</span>${minute ? `<span class="muted" style="margin-left:auto;">${minute}</span>` : ''}</div>`;
+  const MIN_PLAYERS_CHECKED_IN = 7;
+
+  function updateMatchReportGate() {
+    const team1Id = gameData && gameData.teams && gameData.teams[0] && gameData.teams[0].id;
+    const team2Id = gameData && gameData.teams && gameData.teams[1] && gameData.teams[1].id;
+
+    const countCheckedInPlayers = (teamId) => {
+      if (!teamId) return 0;
+      return Object.entries(checkinState).filter(([key, v]) => {
+        const [entryTeamId] = key.split(':');
+        return entryTeamId === teamId && v.personType === 'player';
+      }).length;
     };
 
-    const entries = r.entries || [];
-    const homeEvents = entries.filter(e => e.team_id === r.team1_id);
-    const awayEvents = entries.filter(e => e.team_id === r.team2_id);
+    const team1Count = countCheckedInPlayers(team1Id);
+    const team2Count = countCheckedInPlayers(team2Id);
+    const enoughPlayers = team1Count >= MIN_PLAYERS_CHECKED_IN && team2Count >= MIN_PLAYERS_CHECKED_IN;
+    // "Check-in complete" = both teams have been marked done on the check-in page.
+    const bothDone = !!(team1Id && team2Id && teamDoneState[team1Id] && teamDoneState[team2Id]);
+    const bothTeamsReady = enoughPlayers && bothDone;
 
-    document.getElementById('boxScoreCols').innerHTML = `
-      <div class="box-score-col">
-        <h4>${escapeHtml(r.team1_name)}</h4>
-        ${homeEvents.length ? homeEvents.map(eventLine).join('') : '<p class="muted" style="font-size:12.5px;">No events recorded.</p>'}
-      </div>
-      <div class="box-score-col">
-        <h4>${escapeHtml(r.team2_name)}</h4>
-        ${awayEvents.length ? awayEvents.map(eventLine).join('') : '<p class="muted" style="font-size:12.5px;">No events recorded.</p>'}
-      </div>
-    `;
+    document.getElementById('matchReportBtn').disabled = !bothTeamsReady;
+    const ciBtn = document.getElementById('checkInMatchReportBtn');
+    if (ciBtn) ciBtn.style.display = (bothTeamsReady && !reportForfeitFlag) ? 'block' : 'none';
 
-    // Report description (the referee's incident report), plus - in tournament
-    // mode, where the Actions and Officials / Crew columns are hidden - the
-    // officials / crew-change answers and the manual Push Score to SE button.
-    const hasDesc = !!(r.incident_report && r.incident_report.trim());
-    // Written explanations attached to individual cards (supplemental reports).
-    const suppl = (r.entries || []).filter(e => e.supplemental_report && e.supplemental_report.trim());
-    const supplHtml = suppl.map(e => `
-      <div style="margin-top:8px; font-size:13px;">
-        <strong>${e.event_type === 'Red Card' ? '🟥' : '🟨'} ${escapeHtml(e.name)}${e.minute != null ? " (" + e.minute + "')" : ''}</strong>
-        <span class="muted" style="font-size:12px;"> — ${escapeHtml(e.team_name || '')}</span>
-        <div style="white-space:pre-wrap; margin-top:2px;">${escapeHtml(e.supplemental_report)}</div>
-      </div>`).join('');
-    document.getElementById('boxScoreExtra').innerHTML = `
-      <div style="margin-top:16px; border-top:1px solid var(--border); padding-top:12px;">
-        <h4 style="font-size:12px; text-transform:uppercase; color:var(--gray); margin:0 0 6px;">Report Description</h4>
-        ${hasDesc ? `<div style="white-space:pre-wrap; font-size:13.5px;">${escapeHtml(r.incident_report)}</div>` : ''}
-        ${supplHtml}
-        ${(!hasDesc && !suppl.length) ? '<p class="muted" style="margin:0; font-size:12.5px;">No report description submitted.</p>' : ''}
-      </div>
-      ${TOURNAMENT ? `
-        <div style="margin-top:14px;">${crewInfoHtml(r)}</div>
-        <div style="margin-top:12px;">
-          <button class="push-score-btn" onclick="pushScore('${escapeJs(r.game_id)}', this)">Push Score to SE</button>
-          <span class="push-score-result" style="display:block; font-size:11px; margin-top:3px;"></span>
-        </div>` : ''}
-    `;
-
-    document.getElementById('boxScoreOverlay').classList.add('open');
+    const noteEl = document.getElementById('matchReportGateNote');
+    if (bothTeamsReady) {
+      noteEl.style.display = 'none';
+    } else if (enoughPlayers) {
+      noteEl.textContent = 'Complete check-in for both teams before Match Report unlocks.';
+      noteEl.style.display = 'block';
+    } else {
+      const team1Name = (gameData.teams[0] && gameData.teams[0].name) || 'Team 1';
+      const team2Name = (gameData.teams[1] && gameData.teams[1].name) || 'Team 2';
+      const parts = [];
+      if (team1Count < MIN_PLAYERS_CHECKED_IN) parts.push(`${escapeHtml(team1Name)} (${team1Count}/${MIN_PLAYERS_CHECKED_IN})`);
+      if (team2Count < MIN_PLAYERS_CHECKED_IN) parts.push(`${escapeHtml(team2Name)} (${team2Count}/${MIN_PLAYERS_CHECKED_IN})`);
+      noteEl.innerHTML = `Both teams need at least ${MIN_PLAYERS_CHECKED_IN} players checked in before Match Report unlocks.<br>Still needed:<br>${parts.join(' and ')}`;
+      noteEl.style.display = 'block';
+    }
   }
 
-  function closeBoxScore() {
-    document.getElementById('boxScoreOverlay').classList.remove('open');
+  const FORFEIT_REASON_LABELS = { forfeit: 'Forfeit', postponed: 'Postponed', abandoned: 'Abandoned' };
+
+  // Shows either the already-flagged status (if this game has a
+  // forfeit_flags row, however it got one) or the Mark Abandoned button -
+  // never both. Check In / Submit Match Report stay as Check In / Match
+  // Report normally decide, EXCEPT once this game is flagged - at that
+  // point the game isn't being played, so both are disabled regardless of
+  // check-in progress.
+  function renderAbandonUi() {
+    const statusBox = document.getElementById('abandonedStatusBox');
+    const abandonSection = document.getElementById('abandonSection');
+
+    if (reportForfeitFlag) {
+      const label = FORFEIT_REASON_LABELS[reportForfeitFlag.reason] || reportForfeitFlag.reason;
+      statusBox.innerHTML = `
+        <strong>This game has been marked ${escapeHtml(label)}.</strong>
+        ${reportForfeitFlag.notes ? `<div style="margin-top:4px; white-space:pre-wrap;">${escapeHtml(reportForfeitFlag.notes)}</div>` : ''}
+        <div class="muted" style="margin-top:4px;">Check-In and Match Report are disabled for this game. Contact an administrator if this was marked in error.</div>
+      `;
+      statusBox.style.display = 'block';
+      abandonSection.style.display = 'none';
+
+      document.getElementById('matchReportBtn').disabled = true;
+      const ciBtn2 = document.getElementById('checkInMatchReportBtn'); if (ciBtn2) ciBtn2.style.display = 'none';
+      const checkInBtn = document.querySelector('.landing-buttons button:not(.secondary)');
+      if (checkInBtn) checkInBtn.disabled = true;
+      document.getElementById('matchReportGateNote').style.display = 'none';
+      return;
+    }
+
+    statusBox.style.display = 'none';
+    abandonSection.style.display = 'block';
   }
 
-  // Used by the mobile card's "View Incident Report" button - a proper
-  // modal, unlike the desktop table's toggleIncidentReport (which just
-  // shows/hides a row baked into the table, invisible on mobile since the
-  // whole table is hidden there).
-  function openIncidentReportModal(gameId) {
-    const r = lastLoadedReports.find(x => x.game_id === gameId);
-    if (!r || !r.incident_report) return;
-
-    document.getElementById('incidentReportSubtitle').textContent = r.team1_name + ' vs ' + r.team2_name;
-    document.getElementById('incidentReportBody').textContent = r.incident_report;
-    document.getElementById('incidentReportOverlay').classList.add('open');
+  function toggleAbandonForm(show) {
+    const form = document.getElementById('abandonForm');
+    const isShown = show != null ? show : form.style.display === 'none';
+    form.style.display = isShown ? 'block' : 'none';
+    if (isShown) {
+      document.getElementById('abandonNotesInput').focus();
+    } else {
+      document.getElementById('abandonNotesInput').value = '';
+      document.getElementById('abandonResult').innerHTML = '';
+      updateAbandonSubmitState();
+    }
   }
 
-  function closeIncidentReportModal() {
-    document.getElementById('incidentReportOverlay').classList.remove('open');
+  function updateAbandonSubmitState() {
+    const notes = document.getElementById('abandonNotesInput').value.trim();
+    document.getElementById('submitAbandonedBtn').disabled = !notes;
   }
 
-  // Shows the forfeit/postponed/abandoned reason's notes (the referee's
-  // own explanation, for a game marked Abandoned from the matchday app -
-  // see checkin_server.js's mark-abandoned endpoint - or whatever an admin
-  // typed in for Forfeit/Postponed) in the same modal pattern as the
-  // Incident Report, rather than inline in the row/card.
-  function openForfeitDetailsModal(gameId) {
-    const r = lastLoadedReports.find(x => x.game_id === gameId);
-    if (!r) return;
-    const label = reasonLabelFor(r) || 'Forfeit';
-
-    document.getElementById('forfeitDetailsTitle').textContent = label;
-    document.getElementById('forfeitDetailsSubtitle').textContent = r.team1_name + ' vs ' + r.team2_name;
-    document.getElementById('forfeitDetailsBody').textContent = r.forfeit_notes || 'No additional details provided.';
-    document.getElementById('forfeitDetailsOverlay').classList.add('open');
+  async function submitAbandonedMatch() {
+    const notes = document.getElementById('abandonNotesInput').value.trim();
+    if (!notes) return; // button is disabled without notes, but guard anyway
+    const btn = document.getElementById('submitAbandonedBtn');
+    const resultEl = document.getElementById('abandonResult');
+    btn.disabled = true;
+    btn.textContent = 'Submitting...';
+    resultEl.innerHTML = '';
+    try {
+      const res = await fetch('/api/match-report/' + encodeURIComponent(gameId) + '/mark-abandoned', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes, gameStartTime: (gameData && gameData.event && gameData.event.start) || null }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Unknown error');
+      reportForfeitFlag = { reason: 'abandoned', notes };
+      renderAbandonUi();
+    } catch (e) {
+      resultEl.innerHTML = '<div class="err">' + escapeHtml(e.message) + '</div>';
+      btn.disabled = false;
+      btn.textContent = 'Submit Abandoned Match';
+    }
   }
 
-  // ---- Team kits ----------------------------------------------------------
-  const KIT_TYPES = ['home', 'away', 'gk_primary', 'gk_secondary'];
-  const KIT_LABELS = { home: 'Home', away: 'Away', gk_primary: 'GK Primary', gk_secondary: 'GK Secondary' };
-  const KIT_PARTS = [['jersey_color', 'Jersey'], ['shorts_color', 'Shorts'], ['socks_color', 'Socks']];
-  const KIT_PRESET_NAMES = {
-    '#FFFFFF': 'White', '#111111': 'Black', '#808080': 'Gray', '#C0C0C0': 'Silver', '#D32F2F': 'Red', '#800000': 'Maroon',
-    '#F57C00': 'Orange', '#FFD600': 'Yellow', '#D4AF37': 'Gold', '#76FF03': 'Lime / Neon Green', '#2E7D32': 'Green',
-    '#004D25': 'Dark Green', '#00897B': 'Teal', '#4FC3F7': 'Light Blue', '#1E4FD8': 'Royal Blue', '#0B1F4B': 'Navy',
-    '#6A1B9A': 'Purple', '#E91E63': 'Pink', '#6D4C41': 'Brown',
-  };
-  function kitColorName(hex) { return hex ? (KIT_PRESET_NAMES[hex.toUpperCase()] || hex.toUpperCase()) : null; }
+  function showCheckIn() {
+    document.getElementById('landingView').style.display = 'none';
+    document.getElementById('matchReportView').style.display = 'none';
+    closeReportPicker();
+    document.getElementById('checkInView').style.display = 'block';
+    renderTeamSelector();
+  }
 
+  let activeCheckinTeamId = null; // which team's roster is currently visible - only ever one at a time
+
+  // The tiles ARE the switcher — clicking one shows that team's roster now,
+  // clicking the other switches to it. No separate selection step or tabs.
+  // Player + goalkeeper kit as worn in this game: each of jersey / shorts /
+  // socks comes from the admin's per-game choice, else the default (home team
+  // Home, away team Away, goalkeepers GK Primary).
   function kitSvg(kit) {
-    kit = kit || {};
     const part = (hex, d) => hex
       ? `<path d="${d}" fill="${hex}" stroke="rgba(0,0,0,.35)" stroke-width="1.2" stroke-linejoin="round"/>`
       : `<path d="${d}" fill="#F4F6FA" stroke="#B8C0CC" stroke-width="1.2" stroke-dasharray="3 2" stroke-linejoin="round"/>`;
@@ -931,296 +448,1161 @@
     const shorts = 'M19 46 L45 46 L48 68 L34 68 L32 57 L30 68 L16 68 Z';
     const sockL = 'M17 71 L28 71 L27 95 Q22 98 17 95 Z';
     const sockR = 'M36 71 L47 71 L47 95 Q42 98 37 95 Z';
-    return `<svg viewBox="0 0 64 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kit">
+    return `<svg viewBox="0 0 64 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kit" style="width:100%; height:100%; display:block;">
       ${part(kit.jersey_color, jersey)}${part(kit.shorts_color, shorts)}${part(kit.socks_color, sockL)}${part(kit.socks_color, sockR)}</svg>`;
   }
-
-  // ---- Per-game kit choices, mix-and-match by part -------------------------
-  // For each team, each of Jersey / Shorts / Socks is chosen separately for the
-  // outfield kit (Home or Away) and the goalkeeper kit (GK Primary or GK
-  // Secondary). Nothing chosen = default: home team Home, away team Away,
-  // goalkeepers GK Primary.
-  const PART_KEYS = ['jersey', 'shorts', 'socks'];
-  const PART_LABELS = { jersey: 'Jersey', shorts: 'Shorts', socks: 'Socks' };
-  const DEFAULT_GK_KIT = 'gk_primary';
-  const GROUPS = {
-    out: { title: 'Outfield kit', types: ['home', 'away'] },
-    gk: { title: 'Goalkeeper kit', types: ['gk_primary', 'gk_secondary'] },
-  };
-  function defaultOutfieldKit(side) { return side === 1 ? 'home' : 'away'; }
-  function defaultKitFor(side, group) { return group === 'out' ? defaultOutfieldKit(side) : DEFAULT_GK_KIT; }
-  function teamIdFor(r, side) { return side === 1 ? r.team1_id : r.team2_id; }
-  function assignmentFor(r, side) {
-    return ((kitAssignments[r.game_id] || {})[teamIdFor(r, side)]) || {};
-  }
-  // kit type a given part currently comes from. valueOf(group, part) = explicit choice or ''.
-  function effectiveKit(side, group, part, explicit) { return explicit || defaultKitFor(side, group); }
-  // Jersey/shorts/socks colors of the mixed kit, picked part by part.
-  function mixedKitColors(kits, side, group, explicitOf) {
+  function teamKitColors(team, group) {
+    const kits = team.kits || {};
+    const a = team.kitAssignment || {};
+    const dflt = group === 'out' ? (team.isHome ? 'home' : 'away') : 'gk_primary';
     const out = {};
-    PART_KEYS.forEach(part => {
-      const kt = effectiveKit(side, group, part, explicitOf(part));
+    ['jersey', 'shorts', 'socks'].forEach(part => {
+      const kt = a[group + '_' + part] || dflt;
       out[part + '_color'] = (kits[kt] || {})[part + '_color'] || null;
     });
     return out;
   }
-
-  function miniKitHtml(r, side) {
-    const teamId = teamIdFor(r, side);
-    const kits = (teamId && kitsByTeam[teamId]) || {};
-    const a = assignmentFor(r, side);
-    const mini = (group, title, label) => {
-      const colors = mixedKitColors(kits, side, group, part => a[group + '_' + part]);
-      if (!(colors.jersey_color || colors.shorts_color || colors.socks_color)) return '';
-      return `<span class="mini-kit" title="${title} - click for all kits" onclick="openKitsModal('${escapeJs(r.game_id)}')">${kitSvg(colors)}<span class="mini-kit-label">${label}</span></span>`;
+  function teamKitsHtml(team) {
+    const one = (label, group) => {
+      const c = teamKitColors(team, group);
+      if (!(c.jersey_color || c.shorts_color || c.socks_color)) return '';
+      return `<div style="text-align:center;"><div style="width:26px; height:40px; margin:0 auto;">${kitSvg(c)}</div><div class="muted" style="font-size:10.5px; margin-top:2px;">${label}</div></div>`;
     };
-    // Outfield kit, then the goalkeeper kit (each only if it has any colors set).
-    return mini('out', 'Team kit as worn', 'Team') + mini('gk', 'Goalkeeper kit as worn', 'GK');
+    const html = one('Player', 'out') + one('GK', 'gk');
+    // Clicking opens a read-only window with the actual kit photos.
+    return html ? `<div style="display:flex; gap:14px; justify-content:center; margin-top:8px; cursor:pointer;" title="Tap to see the kits" onclick="event.stopPropagation(); openKitViewer('${escapeJs(team.id)}')">${html}</div>` : '';
   }
 
-  // One selectable option (e.g. "Home jersey"): the part's photo if there is one, else a color swatch.
-  function partOptionHtml(kits, kt, part, selected, explicit, onclick) {
-    const k = kits[kt] || {};
-    const color = k[part + '_color'];
-    const img = k[part + '_image_url'];
-    const visual = img
-      ? `<img src="${escapeHtml(img)}" alt="" loading="lazy" />`
-      : `<span class="part-swatch${color ? '' : ' none'}" style="${color ? 'background:' + color : ''}"></span>`;
-    return `<div class="part-opt${selected ? ' sel' : ''}" onclick="${onclick}">
-      ${visual}
-      <div class="part-opt-txt"><b>${KIT_LABELS[kt]}</b><br>${color ? escapeHtml(kitColorName(color)) : '<span style="color:#9aa3b0;">not set</span>'}${selected && !explicit ? '<br><i>default</i>' : ''}</div>
-    </div>`;
-  }
-
-  // Draft of the admin's picks while the modal is open:
-  // { gameId, 1: { out_jersey, ..., gk_socks }, 2: { ... } } - '' = default.
-  let kitDraft = null;
-
-  function renderKitsModal() {
-    const r = lastLoadedReports.find(x => x.game_id === kitDraft.gameId);
-    if (!r) return;
-    document.getElementById('kitsTitle').textContent = r.team1_name + ' vs ' + r.team2_name;
-    document.getElementById('kitsSubtitle').textContent = 'Choose the jersey, shorts and socks each team wears. Mix and match as needed.';
-    const col = (name, side) => {
-      const kits = (teamIdFor(r, side) && kitsByTeam[teamIdFor(r, side)]) || {};
-      const d = kitDraft[side];
-      const custom = Object.values(d).some(v => v);
-      const section = (group) => {
-        const g = GROUPS[group];
-        const colors = mixedKitColors(kits, side, group, part => d[group + '_' + part]);
-        const rows = PART_KEYS.map(part => {
-          const explicit = d[group + '_' + part];
-          const eff = effectiveKit(side, group, part, explicit);
-          return `<div class="part-row"><div class="part-row-label">${PART_LABELS[part]}</div>
-            ${g.types.map(kt => partOptionHtml(kits, kt, part, kt === eff, explicit, `pickKitPart(${side}, '${group}', '${part}', '${kt}')`)).join('')}</div>`;
-        }).join('');
-        return `<div class="kit-section">
-          <div class="kit-section-head"><span>${g.title}</span>
-            <span>${g.types.map(kt => `<a href="#" onclick="setKitGroup(${side}, '${group}', '${kt}'); return false;">All ${KIT_LABELS[kt]}</a>`).join(' · ')}</span></div>
-          <div class="kit-section-body"><div class="kit-preview">${kitSvg(colors)}</div><div class="kit-parts">${rows}</div></div>
+  // Read-only viewer: the photo of each jersey / shorts / socks the team wears
+  // in this game (player kit and GK kit); a color swatch where there is no
+  // photo. Nothing here can be edited.
+  const KIT_TYPE_LABELS = { home: 'Home', away: 'Away', gk_primary: 'GK Primary', gk_secondary: 'GK Secondary' };
+  function openKitViewer(teamId) {
+    const team = (gameData.teams || []).find(t => t.id === teamId);
+    if (!team) return;
+    const kits = team.kits || {};
+    const a = team.kitAssignment || {};
+    const section = (title, group) => {
+      const dflt = group === 'out' ? (team.isHome ? 'home' : 'away') : 'gk_primary';
+      const tiles = ['jersey', 'shorts', 'socks'].map(part => {
+        const kt = a[group + '_' + part] || dflt;
+        const k = kits[kt] || {};
+        const img = k[part + '_image_url'];
+        const color = k[part + '_color'];
+        const visual = img
+          ? `<img src="${escapeHtml(img)}" alt="" style="width:100%; max-height:200px; object-fit:contain; border-radius:6px; background:#fff;" />`
+          : `<div style="height:90px; border-radius:6px; border:1px solid var(--border); background:${color ? escapeHtml(color) : '#F4F6FA'}; display:flex; align-items:center; justify-content:center; font-size:11px; color:${color ? 'rgba(255,255,255,.0)' : 'var(--gray)'};">${color ? '' : 'Not set'}</div>`;
+        return `<div style="flex:1; min-width:0; text-align:center;">
+          <div class="muted" style="font-size:11px; font-weight:700; text-transform:uppercase; margin-bottom:4px;">${part}</div>
+          ${visual}
+          <div class="muted" style="font-size:11px; margin-top:3px;">${escapeHtml(KIT_TYPE_LABELS[kt] || kt)}${img || !color ? '' : ' (no photo)'}</div>
         </div>`;
-      };
-      return `<div><h4 style="font-size:12px; text-transform:uppercase; color:var(--gray); margin:0 0 4px; border-bottom:1px solid var(--border); padding-bottom:6px; display:flex; justify-content:space-between;">
-          <span>${escapeHtml(name)} ${side === 1 ? '(Home)' : '(Away)'}</span>
-          ${custom ? `<a href="#" style="font-weight:600; text-transform:none; color:var(--navy);" onclick="resetKitSide(${side}); return false;">Reset to default</a>` : ''}
-        </h4>${section('out')}${section('gk')}</div>`;
+      }).join('');
+      return `<div style="margin-top:14px;"><div style="font-weight:700; color:var(--navy); margin-bottom:6px;">${title}</div><div style="display:flex; gap:8px;">${tiles}</div></div>`;
     };
-    document.getElementById('kitsBody').innerHTML = col(r.team1_name, 1) + col(r.team2_name, 2);
+    document.getElementById('kitViewerTitle').textContent = team.name;
+    document.getElementById('kitViewerBody').innerHTML = section('Player kit', 'out') + section('Goalkeeper kit', 'gk');
+    document.getElementById('kitViewerOverlay').style.display = 'flex';
+  }
+  function closeKitViewer() { document.getElementById('kitViewerOverlay').style.display = 'none'; }
+
+  function renderTeamSelector() {
+    const container = document.getElementById('teamSelector');
+    container.innerHTML = gameData.teams.map(team => `
+      <div class="team-select-tile ${activeCheckinTeamId === team.id ? 'selected' : ''}"
+        onclick="selectActiveTeam('${escapeJs(team.id)}')">
+        ${team.logoUrl ? `<img src="${escapeHtml(team.logoUrl)}" alt="" style="width:44px; height:44px; object-fit:contain; margin-bottom:6px;" onerror="this.style.display='none'" />` : ''}
+        <div class="tname">${escapeHtml(team.name)}</div>
+        ${teamKitsHtml(team)}
+      </div>
+    `).join('');
+    renderActiveRoster();
   }
 
-  function pickKitPart(side, group, part, kitType) {
-    kitDraft[side][group + '_' + part] = kitType;
-    renderKitsModal();
-  }
-  function setKitGroup(side, group, kitType) {
-    PART_KEYS.forEach(part => { kitDraft[side][group + '_' + part] = kitType; });
-    renderKitsModal();
-  }
-  function emptyKitChoice() {
-    const o = {};
-    ['out', 'gk'].forEach(g => PART_KEYS.forEach(p => { o[g + '_' + p] = ''; }));
-    return o;
-  }
-  function resetKitSide(side) {
-    kitDraft[side] = emptyKitChoice();
-    renderKitsModal();
+  function selectActiveTeam(teamId) {
+    activeCheckinTeamId = teamId;
+    renderTeamSelector();
   }
 
-  function openKitsModal(gameId) {
-    const r = lastLoadedReports.find(x => x.game_id === gameId);
-    if (!r) return;
-    kitDraft = { gameId };
-    [1, 2].forEach(side => {
-      const a = assignmentFor(r, side);
-      kitDraft[side] = emptyKitChoice();
-      Object.keys(kitDraft[side]).forEach(k => { kitDraft[side][k] = a[k] || ''; });
-    });
-    document.getElementById('kitsStatus').textContent = '';
-    renderKitsModal();
-    document.getElementById('kitsOverlay').classList.add('open');
+  // Renders ONLY the currently active team's roster - never both at once,
+  // even when both teams are selected (use the tabs above to switch).
+  function renderActiveRoster() {
+    updateMatchReportGate(); // done/edit toggles change whether Match Report is unlocked
+    const container = document.getElementById('activeTeamRoster');
+    if (!activeCheckinTeamId) {
+      container.innerHTML = '';
+      return;
+    }
+
+    const team = gameData.teams.find(t => t.id === activeCheckinTeamId);
+    const playerCount = countCheckedIn(team.id, 'player');
+    const staffCount = countCheckedIn(team.id, 'staff');
+    const isDone = !!teamDoneState[team.id];
+
+    if (isDone) {
+      // Roster is fully hidden once checked in - just a compact confirmation.
+      container.innerHTML = `
+        <div class="done-banner">
+          <div style="font-size:15px; font-weight:700; color:var(--success);">✓ Check-In Complete — ${escapeHtml(team.name)}</div>
+          <div class="muted" style="margin:4px 0 10px;">${playerCount} of ${config.maxPlayers} players, ${staffCount} of ${config.maxStaff} staff checked in.</div>
+          <button class="secondary" onclick="editTeamCheckin('${escapeJs(team.id)}')">Edit</button>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = `
+      <p class="muted" style="margin-top:0;">Enter a player's jersey number to check them in. Clear the number to remove them.</p>
+      <div class="section-label">Staff</div>
+      <div class="cap-counter" id="staffCap-${team.id}">${staffCount} of ${config.maxStaff} checked in</div>
+      <div id="staff-${team.id}"></div>
+      <div class="section-label">Players</div>
+      <div class="cap-counter" id="playerCap-${team.id}">${playerCount} of ${config.maxPlayers} checked in</div>
+      <div id="players-${team.id}"></div>
+      <button style="width:100%; margin-top:14px;" onclick="markTeamDone('${escapeJs(team.id)}')">Done — ${escapeHtml(team.name)} Check-In Complete</button>
+    `;
+
+    renderRosterList(team.id, team.name, 'staff-' + team.id, team.staff || [], 'staff', false);
+    renderRosterList(team.id, team.name, 'players-' + team.id, team.players || [], 'player', false);
   }
 
-  async function saveKitAssignments() {
-    const r = lastLoadedReports.find(x => x.game_id === kitDraft.gameId);
-    const status = document.getElementById('kitsStatus');
-    const btn = document.getElementById('kitsSaveBtn');
-    const assignments = [1, 2].filter(side => teamIdFor(r, side)).map(side => {
-      const a = { team_id: teamIdFor(r, side) };
-      Object.keys(kitDraft[side]).forEach(k => { a[k] = kitDraft[side][k] || null; });
-      return a;
-    });
-    btn.disabled = true; status.textContent = 'Saving…'; status.style.color = '';
+  async function markTeamDone(teamId) {
+    const team = gameData.teams.find(t => t.id === teamId);
+    teamDoneState[teamId] = true; // optimistic - update UI immediately
+    renderActiveRoster();
+    const ok = await setTeamCompletion(teamId, team.name, true);
+    if (!ok) {
+      teamDoneState[teamId] = false; // roll back on failure
+      renderActiveRoster();
+    }
+  }
+
+  async function editTeamCheckin(teamId) {
+    const team = gameData.teams.find(t => t.id === teamId);
+    teamDoneState[teamId] = false;
+    renderActiveRoster();
+    const ok = await setTeamCompletion(teamId, team.name, false);
+    if (!ok) {
+      teamDoneState[teamId] = true; // roll back on failure
+      renderActiveRoster();
+    }
+  }
+
+  async function setTeamCompletion(teamId, teamName, completed) {
     try {
-      const resp = await fetch(`/api/match-reports/${encodeURIComponent(r.game_id)}/kit-assignments`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assignments }),
+      const res = await fetch('/api/checkin-complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId, teamId, teamName, completed }),
       });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || 'Save failed');
-      kitAssignments[r.game_id] = kitAssignments[r.game_id] || {};
-      assignments.forEach(a => {
-        const { team_id, ...choice } = a;
-        if (Object.values(choice).every(v => v == null)) delete kitAssignments[r.game_id][team_id];
-        else kitAssignments[r.game_id][team_id] = choice;
-      });
-      applyReportFilterAndRender(); // refresh the small kit icons in the table
-      status.textContent = 'Saved.'; status.style.color = 'var(--ok, #1E7A46)';
+      const json = await res.json();
+      if (!res.ok) {
+        alert(json.error || 'Failed to save check-in status.');
+        return false;
+      }
+      return true;
     } catch (e) {
-      status.textContent = e.message; status.style.color = 'var(--danger)';
-    } finally { btn.disabled = false; }
-  }
-  function closeKitsModal() { document.getElementById('kitsOverlay').classList.remove('open'); }
-
-  function closeForfeitDetailsModal() {
-    document.getElementById('forfeitDetailsOverlay').classList.remove('open');
+      alert('Network error: ' + e.message);
+      return false;
+    }
   }
 
+  function countCheckedIn(teamId, personType) {
+    return Object.entries(checkinState).filter(([key, val]) =>
+      key.startsWith(teamId + ':') && val.personType === personType
+    ).length;
+  }
+
+  function renderRosterList(teamId, teamName, containerId, people, personType, readOnly) {
+    const container = document.getElementById(containerId);
+    const sortedPeople = [...people].sort((a, b) => (a.firstName || '').localeCompare(b.firstName || ''));
+    container.innerHTML = sortedPeople.map(p => {
+      const profileId = p.profileId;
+      const name = (p.firstName + ' ' + p.lastName).trim();
+      const key = teamId + ':' + profileId;
+      const isChecked = !!checkinState[key];
+      const currentJersey = isChecked ? (checkinState[key].jerseyNumber || '') : '';
+      const disabledAttr = (readOnly || p.suspended) ? 'disabled' : '';
+
+      const control = personType === 'player'
+        ? `<input type="text" inputmode="numeric" maxlength="3" placeholder="#" value="${escapeHtml(currentJersey)}"
+             id="jersey-${key}" ${disabledAttr}
+             onchange="onPlayerJerseyInput('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${escapeJs(profileId)}', '${escapeJs(name)}')" />`
+        : `<input type="checkbox" id="chk-${key}" ${isChecked ? 'checked' : ''} ${disabledAttr}
+             onchange="onStaffCheckToggle('${escapeJs(teamId)}', '${escapeJs(teamName)}', '${escapeJs(profileId)}', '${escapeJs(name)}', this.checked)" />`;
+
+      return `
+        <div>
+          <div class="roster-row ${readOnly ? 'readonly' : ''}">
+            ${control}
+            <span class="rname" ${p.suspended ? 'style="text-decoration:line-through; color:var(--gray);"' : ''}>${escapeHtml(name)}</span>
+            ${p.suspended ? '<span class="muted" style="font-size:11px; color:var(--danger); font-weight:700;">SUSPENDED</span>' : ''}
+          </div>
+          <div class="row-error" id="err-${key}" style="display:none; color:var(--danger); font-size:11.5px; margin:-4px 0 4px;"></div>
+        </div>`;
+    }).join('') || `<p class="muted">No ${personType === 'staff' ? 'coaches' : 'players'} rostered.</p>`;
+  }
+
+  // Players: entering a jersey number IS the check-in action - no separate
+  // checkbox. Clearing the number removes them.
+  async function onPlayerJerseyInput(teamId, teamName, profileId, name) {
+    const key = teamId + ':' + profileId;
+    const jerseyEl = document.getElementById('jersey-' + key);
+    const errEl = document.getElementById('err-' + key);
+    const jerseyNumber = jerseyEl.value.trim();
+    if (errEl) errEl.style.display = 'none';
+
+    const wasCheckedIn = !!checkinState[key];
+
+    if (jerseyNumber) {
+      // Quick client-side check for an immediate response - the server
+      // still enforces this too (source of truth, and safe under
+      // simultaneous requests from two different people).
+      const duplicate = Object.entries(checkinState).find(([otherKey, val]) =>
+        otherKey !== key && otherKey.startsWith(teamId + ':') && val.personType === 'player' && val.jerseyNumber === jerseyNumber
+      );
+      if (duplicate) {
+        jerseyEl.value = wasCheckedIn ? checkinState[key].jerseyNumber : '';
+        if (errEl) { errEl.textContent = `Jersey number ${jerseyNumber} is already assigned to ${duplicate[1].name}.`; errEl.style.display = 'block'; }
+        return;
+      }
+
+      const ok = await submitCheckin(teamId, teamName, 'player', profileId, name, jerseyNumber, 'add');
+      if (!ok) {
+        jerseyEl.value = wasCheckedIn ? checkinState[key].jerseyNumber : ''; // revert on failure (e.g. cap reached or server-side duplicate catch)
+        return;
+      }
+      checkinState[key] = { jerseyNumber, personType: 'player', name };
+    } else if (wasCheckedIn) {
+      await submitCheckin(teamId, teamName, 'player', profileId, name, null, 'remove');
+      delete checkinState[key];
+    }
+
+    refreshCounters(teamId);
+    updateMatchReportGate();
+  }
+
+  // Staff: unchanged simple checkbox toggle - no jersey number concept for them.
+  async function onStaffCheckToggle(teamId, teamName, profileId, name, isChecked) {
+    const key = teamId + ':' + profileId;
+    const checkboxEl = document.getElementById('chk-' + key);
+
+    if (isChecked) {
+      const ok = await submitCheckin(teamId, teamName, 'staff', profileId, name, null, 'add');
+      if (!ok) {
+        checkboxEl.checked = false; // revert on failure (e.g. cap reached)
+        return;
+      }
+      checkinState[key] = { jerseyNumber: null, personType: 'staff', name };
+    } else {
+      await submitCheckin(teamId, teamName, 'staff', profileId, name, null, 'remove');
+      delete checkinState[key];
+    }
+
+    refreshCounters(teamId);
+    updateMatchReportGate();
+  }
+
+  async function submitCheckin(teamId, teamName, personType, profileId, name, jerseyNumber, action) {
+    try {
+      const res = await fetch('/api/checkin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId, gameDate: gameData.event.start || null, teamId, teamName, personType, profileId, name, jerseyNumber, action }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        alert(json.error || 'Check-in failed.');
+        return false;
+      }
+      return true;
+    } catch (e) {
+      alert('Network error: ' + e.message);
+      return false;
+    }
+  }
+
+  function refreshCounters(teamId) {
+    const playerCount = countCheckedIn(teamId, 'player');
+    const staffCount = countCheckedIn(teamId, 'staff');
+
+    const playerCapEl = document.getElementById('playerCap-' + teamId);
+    playerCapEl.textContent = playerCount + ' of ' + config.maxPlayers + ' checked in';
+    playerCapEl.classList.toggle('at-cap', playerCount >= config.maxPlayers);
+
+    const staffCapEl = document.getElementById('staffCap-' + teamId);
+    staffCapEl.textContent = staffCount + ' of ' + config.maxStaff + ' checked in';
+    staffCapEl.classList.toggle('at-cap', staffCount >= config.maxStaff);
+
+    // Once a team hits its cap, disable only the still-empty jersey fields
+    // (new check-ins) - fields that already have a number stay editable so
+    // existing entries can still be corrected or cleared.
+    document.querySelectorAll(`#players-${teamId} input[type="text"]`).forEach(inp => {
+      if (!inp.value.trim()) inp.disabled = playerCount >= config.maxPlayers;
+    });
+    document.querySelectorAll(`#staff-${teamId} input[type="checkbox"]`).forEach(cb => {
+      if (!cb.checked) cb.disabled = staffCount >= config.maxStaff;
+    });
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
   function escapeJs(str) {
-    // Backslash, then single quote (JS string delimiter), then double
-    // quote as an HTML entity (every onclick here sits inside a
-    // double-quoted HTML attribute) - same fix applied to matchday after
-    // a real production crash there, applied here defensively even though
-    // game_id (a UUID) is unlikely to ever contain a quote.
+    // Backslashes first (so later escaping doesn't get double-escaped),
+    // then single quotes (the JS string literal delimiter used
+    // everywhere), then double quotes as an HTML entity - every onclick
+    // built with this function sits inside a double-quoted HTML attribute,
+    // so a literal " in the data (e.g. a team name like Coastal Carolina
+    // "B") would otherwise close that attribute early and corrupt the
+    // markup, exactly like the earlier venues.html bug in a different app.
     return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
   }
 
-  async function toggleExternalFlag(gameId, flagged) {
-    try {
-      const res = await fetch('/api/match-reports/' + encodeURIComponent(gameId) + '/flag-external', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flagged }),
-      });
-      if (!res.ok) throw new Error('Failed to save');
-      loadReports(); // reload so the row's highlight color updates too
-    } catch (e) {
-      alert('Failed to update: ' + e.message);
-      loadReports(); // reload to reflect the actual (unchanged) state
+  // ---------- Match Report ----------
+
+  const YELLOW_CARD_REASONS = ['Unsporting Behavior', 'Delaying the Restart', 'Failure to Respect Distance', 'Persistent Offense', 'Dissent', 'Entering/Leaving Field of Play', "Excessively using the 'review' signal"];
+  const RED_CARD_REASONS = ['Serious Foul Play', 'DOGSO-F', 'DOGSO-H', 'Violent Conduct', 'Abusive Language', 'Biting or Spitting']; // "2nd Caution" intentionally excluded - only ever set by the auto-generation logic, never manually selectable
+
+  let reportScores = {}; // teamId -> score
+  let reportEntries = []; // {teamId, teamName, personType, profileId, name, eventType, minute, reason}
+  let reportAlreadySubmitted = false;
+  // { reason: 'forfeit'|'postponed'|'abandoned', notes } once this game has
+  // been flagged as not played, by either a referee (mark-abandoned, below)
+  // or an admin (forfeit/postponed, from the admin console) - null otherwise.
+  let reportForfeitFlag = null;
+  let reportIncidentReport = null;
+  let reportCrewChangesNeeded = false;
+  let reportOfficialsPresent = 3;
+  let activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null, needsTeamChoice: false };
+
+  // Secret key from the URL (?adminKey=...) that unlocks adding a Yellow/Red
+  // Card to a report that's already been submitted and locked. Checked only
+  // client-side to decide whether to show the extra buttons - the server
+  // independently re-checks it against ADMIN_EDIT_KEY on every add-entry
+  // request, so this is purely a UI convenience, never the real gate.
+  const ADMIN_KEY = new URLSearchParams(location.search).get('adminKey') || '';
+  // True only while the picker was opened from the locked report view (i.e.
+  // the report is already submitted and we're using the admin add-entry
+  // endpoint), as opposed to the normal pre-submit flow where entries are
+  // just staged in reportEntries[] until Submit is clicked.
+  let adminAddMode = false;
+  // True only while editing an already-submitted report through the "Edit
+  // Full Report" admin escape hatch (enterAdminEditMode below) - as opposed
+  // to adminAddMode, which only appends a single card. While this is true,
+  // the (otherwise locked) editable form is shown pre-filled with the
+  // existing report, and Submit posts to the admin-edit endpoint instead of
+  // the normal (one-time-only) submit endpoint.
+  let adminEditMode = false;
+
+  async function loadMatchReportState() {
+    const res = await fetch('/api/match-report/' + encodeURIComponent(gameId));
+    const data = await res.json();
+    reportScores = {};
+    reportIncidentReport = null;
+    reportCrewChangesNeeded = false;
+    reportOfficialsPresent = 3;
+    if (data.scores) {
+      reportScores[data.scores.team1_id] = data.scores.team1_score;
+      reportScores[data.scores.team2_id] = data.scores.team2_score;
+      reportIncidentReport = data.scores.incident_report || null;
+      reportCrewChangesNeeded = !!data.scores.crew_changes_needed;
+      reportOfficialsPresent = [1, 2, 3].includes(data.scores.officials_present) ? data.scores.officials_present : 3;
+    }
+    reportEntries = (data.entries || []).map(e => ({
+      teamId: e.team_id, teamName: e.team_name, personType: e.person_type,
+      profileId: e.profile_id, name: e.name, eventType: e.event_type, minute: e.minute,
+      reason: e.reason, supplementalReport: e.supplemental_report,
+    }));
+    // Match reports can never be resubmitted once saved - if scores already
+    // exist, this game's report is permanently locked to read-only (unless
+    // an admin explicitly enters Edit Full Report mode, see below).
+    reportAlreadySubmitted = !!data.scores;
+    // A flag pinned to a different start time than this game's current one
+    // is stale - SportsEngine reused the ID for a rescheduled game - so it's
+    // ignored (check-in / match report work normally); the server keeps the
+    // row as history.
+    const flag = data.forfeitFlag || null;
+    const currentStart = gameData && gameData.event && gameData.event.start;
+    const flagIsStale = !!(flag && flag.game_start_time && currentStart
+      && new Date(flag.game_start_time).getTime() !== new Date(currentStart).getTime());
+    reportForfeitFlag = flagIsStale ? null : flag;
+  }
+
+  function showMatchReport() {
+    document.getElementById('landingView').style.display = 'none';
+    document.getElementById('checkInView').style.display = 'none';
+    document.getElementById('matchReportView').style.display = 'block';
+
+    if (reportAlreadySubmitted) {
+      document.getElementById('reportEditableForm').style.display = 'none';
+      document.getElementById('reportLockedView').style.display = 'block';
+      renderLockedReportView();
+      return;
+    }
+
+    document.getElementById('reportLockedView').style.display = 'none';
+    document.getElementById('reportEditableForm').style.display = 'block';
+    renderScoreAndGoals();
+    renderUnifiedReportList('Yellow Card');
+    renderUnifiedReportList('Red Card');
+  }
+
+  function renderLockedReportView() {
+    const container = document.getElementById('reportLockedView');
+    const scoreLines = gameData.teams.map(team =>
+      `<div><strong>${escapeHtml(team.name)}</strong>: ${reportScores[team.id] != null ? reportScores[team.id] : '—'}</div>`
+    ).join('');
+
+    // Red Card entries show their full supplemental report text here too
+    // (previously only visible on request, now displayed so the report is
+    // readable without a separate step once it's been submitted).
+    const entryLines = (eventType, emoji) => {
+      const items = reportEntries.filter(e => e.eventType === eventType);
+      if (!items.length) return '<div class="muted" style="font-size:13px;">None recorded.</div>';
+      return items.map(e => {
+        const reportBlock = e.supplementalReport
+          ? `<div class="muted" style="font-size:12px; margin-top:4px; white-space:pre-wrap;">📄 ${escapeHtml(e.supplementalReport)}</div>`
+          : '';
+        return `<div class="report-entry" style="${reportBlock ? 'flex-direction:column; align-items:stretch;' : ''}">
+          <span>${emoji} <strong>${escapeHtml(e.teamName)}:</strong> ${escapeHtml(e.name)}${e.reason ? ' — ' + escapeHtml(e.reason) : ''}${e.minute != null ? ' — min ' + e.minute : ''}</span>
+          ${reportBlock}
+        </div>`;
+      }).join('');
+    };
+
+    container.innerHTML = `
+      <div class="card" style="background:#F4F9FD; border-color:var(--blue); margin-bottom:16px;">
+        <strong>This match report has already been submitted and cannot be changed.</strong>
+        <p class="muted" style="margin:6px 0 0;">Match reports are locked after submission to keep suspension records accurate. Contact an administrator if a correction is genuinely needed.</p>
+        ${ADMIN_KEY ? `<button class="secondary" style="margin-top:10px;" onclick="enterAdminEditMode()">✏️ Edit Full Report</button>` : ''}
+      </div>
+
+      <div class="section-label" style="margin-top:0;">Final Score</div>
+      <div style="margin-bottom:16px;">${scoreLines}</div>
+
+      <div class="section-label">Goals</div>
+      <div style="margin-bottom:16px;">${entryLines('Goal', '⚽')}</div>
+
+      <div class="section-label">Yellow Cards</div>
+      <div id="lockedYellowList" style="margin-bottom:${ADMIN_KEY ? '8' : '16'}px;">${entryLines('Yellow Card', '🟨')}</div>
+      ${ADMIN_KEY ? `<button class="secondary add-event-btn" style="margin-bottom:16px;" onclick="openMisconductPicker('Yellow Card', true)">+ Add Yellow Card</button>` : ''}
+
+      <div class="section-label">Red Cards</div>
+      <div id="lockedRedList"${!ADMIN_KEY && !reportIncidentReport ? '' : ' style="margin-bottom:8px;"'}>${entryLines('Red Card', '🟥')}</div>
+      ${ADMIN_KEY ? `<button class="secondary add-event-btn" style="margin-bottom:16px;" onclick="openMisconductPicker('Red Card', true)">+ Add Red Card</button>` : ''}
+
+      ${reportIncidentReport ? `
+        <div class="section-label">Incident Report</div>
+        <div style="white-space:pre-wrap; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; font-size:14px;">${escapeHtml(reportIncidentReport)}</div>
+      ` : ''}
+
+      ${ADMIN_KEY ? `<div id="adminAddResult" style="margin-top:8px;"></div>` : ''}
+    `;
+  }
+
+  // Admin-only escape hatch: switches from the locked, read-only report view
+  // into the normal editable form, pre-filled with everything already on
+  // file for this report (scores, every entry, incident report, crew
+  // changes / officials present) - so the admin is editing the real report,
+  // not starting from scratch. Submitting from here (see submitMatchReport)
+  // posts to the admin-edit endpoint with the admin key instead of the
+  // normal one-time-only submit endpoint.
+  function enterAdminEditMode() {
+    if (!ADMIN_KEY) return;
+    adminEditMode = true;
+
+    document.getElementById('reportLockedView').style.display = 'none';
+    document.getElementById('reportEditableForm').style.display = 'block';
+    renderScoreAndGoals();
+    renderUnifiedReportList('Yellow Card');
+    renderUnifiedReportList('Red Card');
+
+    const incidentText = document.getElementById('incidentReportText');
+    incidentText.value = reportIncidentReport || '';
+    if (reportIncidentReport) {
+      document.getElementById('incidentReportSection').style.display = 'block';
+      document.getElementById('incidentReportToggleBtn').textContent = '− Hide Incident Report';
+    }
+
+    document.querySelector(`input[name="crewChangesNeeded"][value="${reportCrewChangesNeeded ? 'yes' : 'no'}"]`).checked = true;
+    document.querySelector(`input[name="officialsPresent"][value="${reportOfficialsPresent}"]`).checked = true;
+
+    const btn = document.getElementById('submitReportBtn');
+    btn.textContent = 'Save Edited Report';
+    btn.disabled = false;
+    btn.onclick = submitMatchReport;
+
+    const resultEl = document.getElementById('reportSubmitResult');
+    resultEl.innerHTML = '<div style="color:var(--gray); font-size:13px;">Admin edit mode: this will overwrite the already-submitted report, including its entries and suspensions for any Red Cards.</div>';
+  }
+
+  // Top section: score input + goal slots together, for BOTH teams at once
+  // (side-by-side on desktop, stacked on mobile via .team-columns).
+  function renderScoreAndGoals() {
+    const scoreContainer = document.getElementById('scoreGoalColumns');
+    scoreContainer.innerHTML = gameData.teams.map(team => `
+      <div>
+        <h3 style="color:var(--navy); margin-bottom:6px; display:flex; align-items:center; gap:8px;">
+          ${team.logoUrl ? `<img src="${escapeHtml(team.logoUrl)}" alt="" style="width:28px; height:28px; object-fit:contain;" onerror="this.style.display='none'" />` : ''}
+          ${escapeHtml(team.name)}
+        </h3>
+        <div class="score-input-row">
+          <span class="muted">Score:</span>
+          <input type="number" inputmode="numeric" min="0" id="score-${team.id}" value="${reportScores[team.id] != null ? reportScores[team.id] : ''}"
+            onchange="onScoreChange('${escapeJs(team.id)}')" />
+        </div>
+      </div>
+    `).join('');
+
+    // Goal slots for both teams stack full-width, one after another, below
+    // the (side-by-side) score inputs - not split into two columns.
+    const goalsContainer = document.getElementById('goalSlotsList');
+    goalsContainer.innerHTML = gameData.teams.map(team => `<div id="report-Goal-${team.id}"></div>`).join('');
+    gameData.teams.forEach(team => renderGoalSlots(team.id, team.name));
+  }
+
+  function onScoreChange(teamId) {
+    const team = gameData.teams.find(t => t.id === teamId);
+    renderGoalSlots(teamId, team.name);
+  }
+
+  function currentScoreValue(teamId) {
+    const el = document.getElementById('score-' + teamId);
+    const val = el ? el.value.trim() : '';
+    return val === '' ? null : parseInt(val, 10);
+  }
+
+  function goalCountForTeam(teamId) {
+    return reportEntries.filter(e => e.teamId === teamId && e.eventType === 'Goal').length;
+  }
+
+  function goalEntriesForTeam(teamId) {
+    return reportEntries.filter(e => e.teamId === teamId && e.eventType === 'Goal');
+  }
+
+  // Renders exactly `score` goal slots for this team - one row per goal in
+  // the score, pre-listed and waiting to be filled. Clicking an empty slot
+  // opens the picker for that specific goal; no separate "+ Add Goal"
+  // button exists since the score itself determines how many are needed.
+  // (Goal slots already know their team - no team-choice step needed here.)
+  // Team name is embedded directly in each slot's label since the "Goals"
+  // header above is now shared across both teams, not repeated per column.
+  function renderGoalSlots(teamId, teamName) {
+    const el = document.getElementById('report-Goal-' + teamId);
+    if (!el) return;
+    const score = currentScoreValue(teamId);
+
+    if (score == null) {
+      el.innerHTML = `<div class="muted" style="font-size:12px;">Enter ${escapeHtml(teamName)}'s score above to list their goal slots.</div>`;
+      return;
+    }
+    if (score === 0) {
+      el.innerHTML = `<div class="muted" style="font-size:12px;">No goals to record for ${escapeHtml(teamName)} (score is 0).</div>`;
+      return;
+    }
+
+    const goals = goalEntriesForTeam(teamId);
+    let html = '';
+    for (let i = 0; i < score; i++) {
+      const entry = goals[i];
+      if (entry) {
+        const idx = reportEntries.indexOf(entry);
+        html += `<div class="report-entry"><span>Goal ${i + 1} ${escapeHtml(teamName)}: ${escapeHtml(entry.name)}${entry.reason === 'Own Goal' ? ' <span class="muted" style="font-size:11px;">(Own Goal)</span>' : ''}${entry.minute != null ? ' — min ' + entry.minute : ''}</span><button onclick="removeReportEntry(${idx})">✕</button></div>`;
+      } else {
+        html += `<div class="option" style="margin-bottom:6px; text-align:center; color:var(--gray);" onclick="openGoalPicker('${escapeJs(teamId)}', '${escapeJs(teamName)}')">Goal ${i + 1} ${escapeHtml(teamName)}: Select player</div>`;
+      }
+    }
+    el.innerHTML = html;
+  }
+
+  // Yellow/Red Card lists are unified across both teams (not split per
+  // team) - each entry shows which team it belongs to. Red Card entries
+  // also show their full supplemental report text (not just a "report on
+  // file" badge) and get an Edit button - including the auto-generated 2nd
+  // Caution one, which now requires a report of its own too (see
+  // confirmReportEntry) - so it can be corrected in place without removing
+  // and re-adding the whole entry.
+  function renderUnifiedReportList(eventType) {
+    const el = document.getElementById('report-' + eventType);
+    if (!el) return;
+    const items = reportEntries.filter(e => e.eventType === eventType);
+    el.innerHTML = items.length
+      ? items.map(e => {
+          const idx = reportEntries.indexOf(e);
+          const isRedCard = e.eventType === 'Red Card';
+          const isAutoRed = isRedCard && e.reason === '2nd Caution';
+          const removeBtn = isAutoRed
+            ? `<span class="muted" style="font-size:11px;">(auto)</span>`
+            : `<button onclick="removeReportEntry(${idx})">✕</button>`;
+          const editBtn = isRedCard
+            ? `<button style="padding:6px 10px; font-size:12px; background:transparent; color:var(--navy); border:1px solid var(--border); border-radius:5px; min-height:32px;" onclick="editReportEntry(${idx})">✎ Edit</button>`
+            : '';
+          const reportBlock = isRedCard
+            ? (e.supplementalReport
+                ? `<div class="muted" style="font-size:12px; margin-top:4px; white-space:pre-wrap;">📄 ${escapeHtml(e.supplementalReport)}</div>`
+                : `<div style="font-size:12px; margin-top:4px; color:var(--danger);">⚠ Report required - use Edit to add it</div>`)
+            : '';
+          return `<div class="report-entry" style="${isRedCard ? 'flex-direction:column; align-items:stretch;' : ''}">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <span><strong>${escapeHtml(e.teamName)}:</strong> ${escapeHtml(e.name)}${e.reason ? ' — ' + escapeHtml(e.reason) : ''}${e.minute != null ? ' — min ' + e.minute : ''}</span>
+              <span style="display:flex; gap:4px; align-items:center;">${editBtn}${removeBtn}</span>
+            </div>
+            ${reportBlock}
+          </div>`;
+        }).join('')
+      : '<div class="muted" style="font-size:12px;">None added yet.</div>';
+  }
+
+  // Reopens the picker for an already-staged Yellow/Red Card entry so its
+  // minute, reason (if manually selectable), and supplemental report can
+  // be changed in place, rather than having to remove and re-add it.
+  // Used both for a normal manually-added red card and for editing the
+  // auto-generated 2nd Caution one (whose reason is fixed either way).
+  function editReportEntry(idx) {
+    const entry = reportEntries[idx];
+    if (!entry) return;
+    activeReportPicker = {
+      teamId: entry.teamId, teamName: entry.teamName, eventType: entry.eventType,
+      pendingPerson: { profileId: entry.profileId, name: entry.name, personType: entry.personType },
+      needsTeamChoice: false, editingIdx: idx,
+    };
+    document.getElementById('reportPickerTitle').textContent = 'Edit ' + entry.eventType + ' — ' + entry.teamName;
+    document.getElementById('reportPickerOverlay').style.display = 'flex';
+    renderMinutePicker();
+  }
+
+  function removeReportEntry(idx) {
+    const entry = reportEntries[idx];
+
+    // Auto-generated 2nd-Caution red cards have no remove button in the UI
+    // (see renderUnifiedReportList), but guard here too in case this is
+    // ever reached some other way - only removable via its triggering
+    // Yellow Card, never directly.
+    if (entry.eventType === 'Red Card' && entry.reason === '2nd Caution') {
+      alert("This red card was automatically added for a 2nd Yellow Card. Remove one of this player's Yellow Cards instead.");
+      return;
+    }
+
+    reportEntries.splice(idx, 1);
+
+    if (entry.eventType === 'Goal') {
+      renderGoalSlots(entry.teamId, entry.teamName);
+      return;
+    }
+
+    renderUnifiedReportList(entry.eventType);
+
+    // If removing this Yellow Card drops the player below 2 total, the
+    // auto-generated 2nd Caution red card (if any) is no longer valid -
+    // remove it too.
+    if (entry.eventType === 'Yellow Card') {
+      const remainingYellows = reportEntries.filter(e =>
+        e.eventType === 'Yellow Card' && e.profileId === entry.profileId && e.teamId === entry.teamId
+      ).length;
+      if (remainingYellows < 2) {
+        const autoRedIdx = reportEntries.findIndex(e =>
+          e.eventType === 'Red Card' && e.reason === '2nd Caution' && e.profileId === entry.profileId && e.teamId === entry.teamId
+        );
+        if (autoRedIdx !== -1) {
+          reportEntries.splice(autoRedIdx, 1);
+          renderUnifiedReportList('Red Card');
+        }
+      }
     }
   }
 
-  async function toggleSeManualEntryFlag(gameId, flagged) {
-    try {
-      const res = await fetch('/api/match-reports/' + encodeURIComponent(gameId) + '/flag-se-manual-entry', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flagged }),
+  // Goal slots already know their team - straight to the person list.
+  // teamId/teamName here are always the team the goal counts FOR (matches
+  // the score slot being filled), even for an own goal - only the roster
+  // being shown to pick a scorer from changes (see toggleOwnGoalMode).
+  function openGoalPicker(teamId, teamName) {
+    const opposing = gameData.teams.find(t => t.id !== teamId);
+    activeReportPicker = {
+      teamId, teamName, eventType: 'Goal', pendingPerson: null, needsTeamChoice: false,
+      rosterTeamId: teamId, isOwnGoal: false,
+      opposingTeamId: opposing ? opposing.id : null, opposingTeamName: opposing ? opposing.name : null,
+    };
+    document.getElementById('reportPickerTitle').textContent = teamName + ' — Goal';
+    renderReportPickerPersonList();
+    document.getElementById('reportPickerOverlay').style.display = 'flex';
+  }
+
+  // Switches the goal picker's roster between the scoring team (normal)
+  // and the opposing team (own goal) without changing which team's score
+  // slot the goal will fill - only who scored it changes.
+  function toggleOwnGoalMode(enable) {
+    activeReportPicker.isOwnGoal = enable;
+    activeReportPicker.rosterTeamId = enable ? activeReportPicker.opposingTeamId : activeReportPicker.teamId;
+    document.getElementById('reportPickerTitle').textContent = enable
+      ? activeReportPicker.teamName + ' — Own Goal (by ' + activeReportPicker.opposingTeamName + ')'
+      : activeReportPicker.teamName + ' — Goal';
+    renderReportPickerPersonList();
+  }
+
+  // Yellow/Red Card sections are unified across both teams, so the picker's
+  // first step here is choosing which team the card belongs to.
+  function toggleIncidentReport() {
+    const section = document.getElementById('incidentReportSection');
+    const btn = document.getElementById('incidentReportToggleBtn');
+    const isHidden = section.style.display === 'none';
+    section.style.display = isHidden ? 'block' : 'none';
+    btn.textContent = isHidden ? '− Hide Incident Report' : '+ Add Incident Report';
+  }
+
+  function openMisconductPicker(eventType, isAdminAdd) {
+    adminAddMode = !!isAdminAdd;
+    activeReportPicker = { teamId: null, teamName: null, eventType, pendingPerson: null, needsTeamChoice: true };
+    document.getElementById('reportPickerTitle').textContent = (adminAddMode ? 'Admin: Add ' : 'Select Team — ') + eventType;
+    renderTeamChoiceForPicker();
+    document.getElementById('reportPickerOverlay').style.display = 'flex';
+  }
+
+  function renderTeamChoiceForPicker() {
+    const listEl = document.getElementById('reportPickerList');
+    listEl.innerHTML = gameData.teams.map(team => `
+      <div class="option" onclick="chooseTeamForPicker('${escapeJs(team.id)}', '${escapeJs(team.name)}')">
+        <div style="font-weight:700; color:var(--navy);">${escapeHtml(team.name)}</div>
+      </div>
+    `).join('');
+  }
+
+  function chooseTeamForPicker(teamId, teamName) {
+    activeReportPicker.teamId = teamId;
+    activeReportPicker.teamName = teamName;
+    document.getElementById('reportPickerTitle').textContent = teamName + ' — ' + activeReportPicker.eventType;
+    renderReportPickerPersonList();
+  }
+
+  function closeReportPicker() {
+    document.getElementById('reportPickerOverlay').style.display = 'none';
+    activeReportPicker = { teamId: null, teamName: null, eventType: null, pendingPerson: null, needsTeamChoice: false };
+    adminAddMode = false;
+  }
+
+  // Only people actually checked in for this team appear here — pulled from
+  // checkinState, not the full SportsEngine roster.
+  function renderReportPickerPersonList() {
+    const { teamId, needsTeamChoice, eventType, rosterTeamId, isOwnGoal, opposingTeamId, opposingTeamName, teamName } = activeReportPicker;
+    const filterTeamId = rosterTeamId || teamId;
+    const listEl = document.getElementById('reportPickerList');
+    const people = Object.entries(checkinState)
+      .filter(([key]) => key.startsWith(filterTeamId + ':'))
+      .map(([key, val]) => ({ profileId: key.split(':')[1], ...val }))
+      .sort((a, b) => {
+        const aNum = parseInt(a.jerseyNumber, 10);
+        const bNum = parseInt(b.jerseyNumber, 10);
+        // Staff (and anyone without a jersey number) sort after all
+        // numbered players, using Infinity as the fallback sort key.
+        return (isNaN(aNum) ? Infinity : aNum) - (isNaN(bNum) ? Infinity : bNum);
       });
-      if (!res.ok) throw new Error('Failed to save');
-      loadReports();
-    } catch (e) {
-      alert('Failed to update: ' + e.message);
-      loadReports(); // reload to reflect the actual (unchanged) state
+
+    const backLink = needsTeamChoice
+      ? `<a href="#" onclick="renderTeamChoiceForPicker(); return false;" class="back-link">← Back to team</a>`
+      : '';
+
+    // Own Goal toggle - only relevant for the Goal picker, and shown at the
+    // top of the list so it's seen before picking a scorer. Toggling swaps
+    // the roster shown below between this team and the opposing team; the
+    // goal still counts toward this team's score slot either way.
+    let ownGoalToggle = '';
+    if (eventType === 'Goal' && opposingTeamId) {
+      ownGoalToggle = isOwnGoal
+        ? `<div class="option" style="background:#FFF7E6; border-color:#E8B84B; margin-bottom:10px;" onclick="toggleOwnGoalMode(false)">
+             <div style="font-weight:700;">← Not an own goal — back to ${escapeHtml(teamName)}'s roster</div>
+           </div>`
+        : `<div class="option" style="background:#FFF7E6; border-color:#E8B84B; margin-bottom:10px;" onclick="toggleOwnGoalMode(true)">
+             <div style="font-weight:700;">⚽ Own Goal — select the ${escapeHtml(opposingTeamName)} player responsible</div>
+           </div>`;
+    }
+
+    if (!people.length) {
+      listEl.innerHTML = ownGoalToggle + backLink + '<p class="muted">No one checked in for this team yet — go to Check In first.</p>';
+      return;
+    }
+
+    listEl.innerHTML = ownGoalToggle + backLink + people.map(p => `
+      <div class="option" onclick="pickReportPerson('${escapeJs(p.profileId)}')">
+        <div style="font-weight:600;">${escapeHtml(p.name)}${p.personType === 'staff' ? ' <span class="pill" style="background:#F1EAD9; color:#7A5B12; padding:2px 8px; border-radius:10px; font-size:10.5px; font-weight:700;">STAFF</span>' : ''}</div>
+        ${p.jerseyNumber ? `<div class="muted" style="font-size:12px;">#${escapeHtml(p.jerseyNumber)}</div>` : ''}
+      </div>
+    `).join('');
+  }
+
+  function pickReportPerson(profileId) {
+    const { teamId, eventType, rosterTeamId } = activeReportPicker;
+    const filterTeamId = rosterTeamId || teamId;
+    const key = filterTeamId + ':' + profileId;
+    const person = checkinState[key];
+    if (!person) return;
+
+    // A player can't receive a 3rd Yellow Card - the 2nd already
+    // auto-generates a Red Card, so there's no valid 3rd.
+    if (eventType === 'Yellow Card') {
+      const existingYellows = reportEntries.filter(e =>
+        e.eventType === 'Yellow Card' && e.profileId === profileId && e.teamId === teamId
+      ).length;
+      if (existingYellows >= 2) {
+        alert(`${person.name} already has 2 Yellow Cards recorded (which results in a Red Card). A 3rd Yellow Card cannot be added.`);
+        return;
+      }
+    }
+
+    activeReportPicker.pendingPerson = { profileId, name: person.name, personType: person.personType };
+    renderMinutePicker();
+  }
+
+  function renderMinutePicker() {
+    const listEl = document.getElementById('reportPickerList');
+    const { eventType, pendingPerson, editingIdx } = activeReportPicker;
+    const existing = editingIdx != null ? reportEntries[editingIdx] : null;
+    const needsReason = eventType === 'Yellow Card' || eventType === 'Red Card';
+    const isRedCard = eventType === 'Red Card';
+    // The auto-generated 2nd Caution red card's reason is fixed - it's
+    // never offered as a manually-selectable option (see RED_CARD_REASONS)
+    // and isn't editable even when editing that entry's minute/report.
+    const isAutoRed = isRedCard && existing && existing.reason === '2nd Caution';
+    const reasons = eventType === 'Yellow Card' ? YELLOW_CARD_REASONS : RED_CARD_REASONS;
+
+    const reasonHtml = isAutoRed ? `
+      <div class="section-label" style="margin-top:0;">Reason</div>
+      <p class="muted" style="margin:0 0 10px;">2nd Caution (automatic - not editable)</p>
+    ` : needsReason ? `
+      <div class="section-label" style="margin-top:0;">Reason</div>
+      <select id="reasonSelect" ${isRedCard ? 'onchange="onRedCardReasonChange()"' : ''} style="width:100%; padding:12px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px; min-height:46px; font-size:16px;">
+        <option value="">-- Select Reason --</option>
+        ${reasons.map(r => `<option value="${escapeHtml(r)}" ${existing && existing.reason === r ? 'selected' : ''}>${escapeHtml(r)}</option>`).join('')}
+      </select>
+    ` : '';
+
+    // A supplemental report is required for every Red Card now, including
+    // the auto-generated 2nd Caution one - never exempted anymore.
+    const supplementalHtml = isRedCard ? `<div id="supplementalReportSection" style="margin-bottom:10px;"></div>` : '';
+
+    const backHtml = editingIdx != null
+      ? `<a href="#" onclick="closeReportPicker(); return false;" class="back-link">← Cancel</a>`
+      : `<a href="#" onclick="renderReportPickerPersonList(); return false;" class="back-link">← Back to list</a>`;
+
+    listEl.innerHTML = `
+      ${backHtml}
+      <p class="muted" style="margin-bottom:10px;"><strong>${escapeHtml(pendingPerson.name)}</strong></p>
+      ${reasonHtml}
+      <input type="number" inputmode="numeric" min="0" id="minuteInput" placeholder="Minute" value="${existing && existing.minute != null ? existing.minute : ''}" style="width:100%; padding:12px; margin-bottom:10px; border:1px solid var(--border); border-radius:8px; min-height:46px; font-size:16px;" />
+      ${supplementalHtml}
+      <button style="width:100%;" onclick="confirmReportEntry()">${editingIdx != null ? 'Save' : 'Add'}</button>
+    `;
+
+    if (isRedCard) onRedCardReasonChange(isAutoRed);
+  }
+
+  function onRedCardReasonChange(forceReasonPresent) {
+    const reasonEl = document.getElementById('reasonSelect');
+    const section = document.getElementById('supplementalReportSection');
+    if (!section) return;
+    const { editingIdx } = activeReportPicker;
+    const existing = editingIdx != null ? reportEntries[editingIdx] : null;
+    const reason = forceReasonPresent ? '2nd Caution' : (reasonEl ? reasonEl.value : '');
+
+    if (reason) {
+      const existingText = existing ? escapeHtml(existing.supplementalReport || '') : '';
+      section.innerHTML = `
+        <div class="section-label" style="margin-top:0;">Supplemental Report</div>
+        <textarea id="supplementalReportInput" placeholder="Describe the incident..." style="width:100%; box-sizing:border-box; min-height:90px; padding:10px; border:1px solid var(--border); border-radius:8px; font-size:15px; font-family:inherit;">${existingText}</textarea>
+      `;
+    } else {
+      section.innerHTML = '<p class="muted" style="font-size:12px;">Select a reason above.</p>';
     }
   }
 
-  async function toggleForfeitFlag(gameId, reason) {
-    try {
-      const res = await fetch('/api/match-reports/' + encodeURIComponent(gameId) + '/flag-forfeit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: reason || null }),
-      });
-      if (!res.ok) throw new Error('Failed to save');
-      loadReports(); // reload so the row's display (score column, actions) updates too
-    } catch (e) {
-      alert('Failed to update: ' + e.message);
-      loadReports();
+  function confirmReportEntry() {
+    const { teamId, teamName, eventType, pendingPerson, isOwnGoal, editingIdx } = activeReportPicker;
+    const existing = editingIdx != null ? reportEntries[editingIdx] : null;
+    const isAutoRed = eventType === 'Red Card' && existing && existing.reason === '2nd Caution';
+    const needsReason = eventType === 'Yellow Card' || eventType === 'Red Card';
+
+    let reason = null;
+    if (isAutoRed) {
+      reason = '2nd Caution'; // fixed, never editable - see renderMinutePicker
+    } else if (needsReason) {
+      reason = document.getElementById('reasonSelect').value;
+      if (!reason) {
+        alert('Select a reason before adding.');
+        return;
+      }
+    }
+    // Own Goal isn't a Yellow/Red Card reason - it's recorded in the same
+    // free-form reason field Goal entries otherwise leave null, purely so
+    // it displays clearly everywhere reason is already shown (goal slots,
+    // the submitted report, the locked view).
+    if (eventType === 'Goal' && isOwnGoal) {
+      reason = 'Own Goal';
+    }
+
+    // A supplemental report is required for every Red Card now, including
+    // the auto-generated 2nd Caution one - no exemption anymore.
+    let supplementalReport = null;
+    if (eventType === 'Red Card') {
+      const textareaEl = document.getElementById('supplementalReportInput');
+      supplementalReport = textareaEl ? textareaEl.value.trim() : '';
+      if (!supplementalReport) {
+        alert('A supplemental report is required for this red card.');
+        return;
+      }
+    }
+
+    const minuteVal = document.getElementById('minuteInput').value.trim();
+    const minute = minuteVal === '' ? null : parseInt(minuteVal, 10);
+
+    if (editingIdx != null) {
+      // Editing an already-staged entry in place, rather than removing and
+      // re-adding it - same person/team/event type throughout, only the
+      // minute, reason (when manually selectable), and report can change.
+      reportEntries[editingIdx] = { ...existing, minute, reason, supplementalReport };
+      renderUnifiedReportList(eventType);
+      closeReportPicker();
+      return;
+    }
+
+    const entry = {
+      teamId, teamName, personType: pendingPerson.personType, profileId: pendingPerson.profileId,
+      name: pendingPerson.name, eventType, minute, reason, supplementalReport,
+    };
+
+    if (adminAddMode) {
+      closeReportPicker();
+      submitAdminAddEntry(entry);
+      return;
+    }
+
+    reportEntries.push(entry);
+
+    // Auto-add a Red Card if this is this player's 2nd Yellow Card in the
+    // game - same minute as the 2nd yellow, reason "2nd Caution". This
+    // also now requires its own supplemental report (previously exempted),
+    // so as soon as it's added, immediately reopen it for editing to
+    // collect that report, rather than leaving it to be caught only at
+    // Submit time.
+    let autoRedIdx = null;
+    if (eventType === 'Yellow Card') {
+      const yellowsForThisPlayer = reportEntries.filter(e =>
+        e.eventType === 'Yellow Card' && e.profileId === pendingPerson.profileId && e.teamId === teamId
+      );
+      if (yellowsForThisPlayer.length === 2) {
+        reportEntries.push({
+          teamId, teamName, personType: pendingPerson.personType, profileId: pendingPerson.profileId,
+          name: pendingPerson.name, eventType: 'Red Card', minute, reason: '2nd Caution', supplementalReport: null,
+        });
+        autoRedIdx = reportEntries.length - 1;
+        renderUnifiedReportList('Red Card');
+      }
+    }
+
+    if (eventType === 'Goal') {
+      renderGoalSlots(teamId, teamName);
+    } else {
+      renderUnifiedReportList(eventType);
+    }
+    closeReportPicker();
+
+    if (autoRedIdx != null) {
+      editReportEntry(autoRedIdx);
     }
   }
 
-  async function setRefereePaid(gameId, value) {
-    const refereePaid = value === 'true' ? true : value === 'false' ? false : null;
+  // Admin-only: adds a single Yellow/Red Card entry to a report that's
+  // already been submitted, via the adminKey-gated /add-entry endpoint.
+  // Never touches team scores and never re-pushes anything to SportsEngine
+  // - it only appends the one entry (see the server-side comment for why).
+  async function submitAdminAddEntry(entry) {
+    const resultEl = document.getElementById('adminAddResult');
+    if (resultEl) resultEl.innerHTML = '<div class="muted" style="font-size:13px;">Saving...</div>';
+
     try {
-      const res = await fetch('/api/match-reports/' + encodeURIComponent(gameId) + '/set-referee-paid', {
+      const res = await fetch('/api/match-report/' + encodeURIComponent(gameId) + '/add-entry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refereePaid }),
+        body: JSON.stringify({
+          adminKey: ADMIN_KEY,
+          teamId: entry.teamId,
+          teamName: entry.teamName,
+          personType: entry.personType,
+          profileId: entry.profileId,
+          name: entry.name,
+          eventType: entry.eventType,
+          minute: entry.minute,
+          reason: entry.reason,
+          supplementalReport: entry.supplementalReport,
+          gameDate: gameData.event.start || null,
+        }),
       });
-      if (!res.ok) throw new Error('Failed to save');
-      loadReports();
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Unknown error');
+
+      reportEntries.push(entry);
+      renderLockedReportView();
+      const freshResultEl = document.getElementById('adminAddResult');
+      if (freshResultEl) {
+        freshResultEl.innerHTML = `<div style="color:var(--success); font-size:13px;">Added ${escapeHtml(entry.eventType)} for ${escapeHtml(entry.name)}.${json.suspensionCreated ? ' Suspension record created.' : ''}</div>`;
+      }
     } catch (e) {
-      alert('Failed to update: ' + e.message);
-      loadReports();
+      if (resultEl) resultEl.innerHTML = '<div class="err">Failed to add entry: ' + escapeHtml(e.message) + '</div>';
     }
   }
 
-  async function setChargeStatus(gameId, value) {
-    const chargeStatus = value || null;
+  async function submitMatchReport() {
+    const resultEl = document.getElementById('reportSubmitResult');
+    resultEl.innerHTML = '';
+    const btn = document.getElementById('submitReportBtn');
+
+    // The minimum-players-checked-in check exists to catch a report being
+    // submitted before check-in was actually completed - not relevant when
+    // an admin is correcting an already-submitted report after the fact.
+    if (!adminEditMode) {
+      const minPlayersRequired = config.minPlayersRequired;
+      for (const team of gameData.teams) {
+        const playerCount = Object.entries(checkinState).filter(
+          ([key, val]) => key.startsWith(team.id + ':') && val.personType === 'player'
+        ).length;
+        if (playerCount < minPlayersRequired) {
+          resultEl.innerHTML = `<div class="err">${escapeHtml(team.name)}: only ${playerCount} of the required ${minPlayersRequired} players are checked in. Complete Check-In before submitting.</div>`;
+          return;
+        }
+      }
+    }
+
+    const scores = {};
+    for (const team of gameData.teams) {
+      const val = document.getElementById('score-' + team.id).value.trim();
+      if (val === '') {
+        resultEl.innerHTML = '<div class="err">Enter a score for both teams.</div>';
+        return;
+      }
+      scores[team.id] = parseInt(val, 10);
+    }
+
+    // Goal count must exactly match the entered score for each team - forces
+    // a goal-scorer + minute to be recorded for every goal in the score.
+    for (const team of gameData.teams) {
+      const goalCount = goalCountForTeam(team.id);
+      const score = scores[team.id];
+      if (goalCount !== score) {
+        resultEl.innerHTML = `<div class="err">${escapeHtml(team.name)}: ${goalCount} of ${score} goal(s) recorded. ` +
+          (goalCount < score ? 'Add the missing goal scorer(s) before submitting.' : 'Remove the extra goal entry/entries before submitting.') + '</div>';
+        return;
+      }
+    }
+
+    // Every Red Card - including an auto-generated 2nd Caution one - must
+    // have its supplemental report filled in before submitting. Normally
+    // caught immediately when the card is added/auto-generated (see
+    // confirmReportEntry), but this is the hard backstop in case one is
+    // ever left incomplete right up to Submit.
+    const missingReportEntry = reportEntries.find(e => e.eventType === 'Red Card' && !e.supplementalReport);
+    if (missingReportEntry) {
+      resultEl.innerHTML = `<div class="err">${escapeHtml(missingReportEntry.name)} (${escapeHtml(missingReportEntry.teamName)}): a supplemental report is required for this red card before submitting. Use the "✎ Edit" button on that entry above to add it.</div>`;
+      return;
+    }
+
+    // If neither team has any Yellow Card or Red Card entries at all,
+    // confirm this is intentional before submitting - a safety check
+    // against forgetting to log misconduct, not a hard block.
+    const anyMisconduct = reportEntries.some(e => e.eventType === 'Yellow Card' || e.eventType === 'Red Card');
+    if (!anyMisconduct) {
+      const confirmed = confirm('No yellow or red cards have been recorded for this match. Confirm there was no misconduct?');
+      if (!confirmed) return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = adminEditMode ? 'Saving...' : 'Submitting...';
+
+    const payload = {
+      gameId,
+      gameDate: gameData.event.start || null,
+      team1: { id: gameData.teams[0].id, name: gameData.teams[0].name, score: scores[gameData.teams[0].id] },
+      team2: { id: gameData.teams[1].id, name: gameData.teams[1].name, score: scores[gameData.teams[1].id] },
+      entries: reportEntries,
+      // Captured at submission time rather than looked up later - team1
+      // (home team) is used as the representative team for the game's
+      // division/gender, same convention already established elsewhere.
+      divisionId: gameData.teams[0].divisionId || null,
+      gender: gameData.teams[0].gender || null,
+      incidentReport: document.getElementById('incidentReportText').value.trim() || null,
+      crewChangesNeeded: document.querySelector('input[name="crewChangesNeeded"]:checked').value === 'yes',
+      officialsPresent: parseInt(document.querySelector('input[name="officialsPresent"]:checked').value, 10),
+    };
+    // Admin edits of an already-submitted report go through a dedicated
+    // endpoint gated on the admin key - the normal endpoint always rejects
+    // this (a report can never be resubmitted through it).
+    if (adminEditMode) payload.adminKey = ADMIN_KEY;
+
     try {
-      const res = await fetch('/api/match-reports/' + encodeURIComponent(gameId) + '/set-charge-status', {
+      const res = await fetch(adminEditMode ? '/api/match-report/' + encodeURIComponent(gameId) + '/admin-edit' : '/api/match-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chargeStatus }),
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error('Failed to save');
-      loadReports();
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Unknown error');
+
+      if (json.scorePushSkipped) {
+        resultEl.innerHTML = `<div style="color:var(--success); font-size:13px;">Report submitted.</div>`;
+        btn.style.display = 'none';
+      } else if (json.scoreUpdated) {
+        resultEl.innerHTML = `<div style="color:var(--success); font-size:13px;">${adminEditMode ? 'Edited report saved' : 'Match report saved'}, and the score was pushed to SportsEngine successfully.</div>`;
+        btn.style.display = 'none'; // report is fully done - nothing left to retry, no button needed
+      } else {
+        resultEl.innerHTML = `<div class="err">Report saved successfully — your entries and score are safe. Only the sync to SportsEngine's own scoreboard failed: ` +
+          escapeHtml(json.scoreError || 'unknown error') + '</div>';
+        // Same button, not a new one - relabel it to retry ONLY the score
+        // push. A normal resubmit would always be rejected at this point
+        // (the report is already saved), so it must never say "resubmit."
+        btn.textContent = 'Retry Score Push to SportsEngine';
+        btn.onclick = retryScorePush;
+      }
     } catch (e) {
-      alert('Failed to update: ' + e.message);
-      loadReports();
+      resultEl.innerHTML = '<div class="err">' + (adminEditMode ? 'Save failed: ' : 'Submit failed: ') + escapeHtml(e.message) + '</div>';
+    } finally {
+      if (btn.style.display !== 'none') {
+        btn.disabled = false;
+        // Don't stomp the "Retry Score Push" label if that's what was just set above.
+        if (btn.textContent === 'Submitting...') btn.textContent = (gameData && gameData.nationalTournament) ? 'Submit Report' : 'Submit Match Report';
+        else if (btn.textContent === 'Saving...') btn.textContent = 'Save Edited Report';
+      }
     }
   }
 
-  function toggleIncidentReport(gameId) {
-    const row = document.getElementById('incident-row-' + gameId);
-    row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
-  }
-
-  async function pushScore(gameId, buttonEl) {
-    const resultEl = buttonEl.nextElementSibling;
-    buttonEl.disabled = true;
-    buttonEl.textContent = 'Pushing...';
-    resultEl.textContent = '';
+  // Retries ONLY the SportsEngine score push, using the score already saved
+  // in Postgres - never a full resubmission (which the backend always
+  // rejects once the report is saved). Called by the SAME button that
+  // originally said "Submit Match Report," relabeled - never a second button.
+  async function retryScorePush() {
+    const resultEl = document.getElementById('reportSubmitResult');
+    const btn = document.getElementById('submitReportBtn');
+    btn.disabled = true;
+    btn.textContent = 'Retrying...';
 
     try {
-      const res = await fetch('/api/match-reports/' + encodeURIComponent(gameId) + '/push-score', { method: 'POST' });
+      const res = await fetch('/api/match-report/' + encodeURIComponent(gameId) + '/retry-score-push', { method: 'POST' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Unknown error');
 
       if (json.scoreUpdated) {
-        resultEl.textContent = '✓ Pushed successfully';
-        resultEl.style.color = 'var(--success, #1F7A4D)';
-        buttonEl.style.display = 'none';
+        resultEl.innerHTML = '<div style="color:var(--success); font-size:13px;">Score pushed to SportsEngine successfully.</div>';
+        btn.style.display = 'none'; // fully done now - nothing left to retry
       } else {
-        resultEl.textContent = 'Failed: ' + (json.scoreError || 'unknown error');
-        resultEl.style.color = 'var(--danger)';
-        buttonEl.disabled = false;
-        buttonEl.textContent = 'Push Score to SE';
+        resultEl.innerHTML = '<div class="err">Still failed to push the score to SportsEngine: ' +
+          escapeHtml(json.scoreError || 'unknown error') + '. Your report remains safely saved - try again whenever ready.</div>';
+        btn.disabled = false;
+        btn.textContent = 'Retry Score Push to SportsEngine';
       }
     } catch (e) {
-      resultEl.textContent = 'Failed: ' + e.message;
-      resultEl.style.color = 'var(--danger)';
-      buttonEl.disabled = false;
-      buttonEl.textContent = 'Push Score to SE';
+      resultEl.innerHTML = '<div class="err">Retry failed: ' + escapeHtml(e.message) + '</div>';
+      btn.disabled = false;
+      btn.textContent = 'Retry Score Push to SportsEngine';
     }
   }
 
-  function escapeHtml(str) {
-    return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
-  }
-
-  initTournamentUi();
-  if (!TOURNAMENT) loadFilterOptions();
-  loadReports();
+  init();
 </script>
 </body>
 </html>
