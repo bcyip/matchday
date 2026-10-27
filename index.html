@@ -260,11 +260,13 @@
             <div style="flex:1; min-width:0; text-align:center;">
               ${teams[0].logoUrl ? `<img src="${escapeHtml(teams[0].logoUrl)}" alt="" style="width:44px; height:44px; object-fit:contain; display:block; margin:0 auto 6px;" onerror="this.style.display='none'" />` : ''}
               <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:clamp(11px, 3.2vw, 15px); font-weight:600; color:var(--navy);" title="${escapeHtml(teams[0].name)}">${escapeHtml(teams[0].name)}</div>
+              ${teamKitsHtml(teams[0])}
             </div>
             <div class="muted" style="font-size:13px; flex-shrink:0;">vs</div>
             <div style="flex:1; min-width:0; text-align:center;">
               ${teams[1].logoUrl ? `<img src="${escapeHtml(teams[1].logoUrl)}" alt="" style="width:44px; height:44px; object-fit:contain; display:block; margin:0 auto 6px;" onerror="this.style.display='none'" />` : ''}
               <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:clamp(11px, 3.2vw, 15px); font-weight:600; color:var(--navy);" title="${escapeHtml(teams[1].name)}">${escapeHtml(teams[1].name)}</div>
+              ${teamKitsHtml(teams[1])}
             </div>
           </div>
         `;
