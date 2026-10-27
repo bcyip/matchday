@@ -294,12 +294,12 @@ async function fetchGameWithRosters(gameId, forceRefresh) {
   try {
     const teamIds = teams.map((t) => t.id).filter(Boolean);
     if (teamIds.length) {
-      const kitRows = await pool.query('SELECT team_id, kit_type, jersey_color, shorts_color, socks_color FROM team_kits WHERE team_id = ANY($1)', [teamIds]);
+      const kitRows = await pool.query('SELECT team_id, kit_type, jersey_color, shorts_color, socks_color, jersey_image_url, shorts_image_url, socks_image_url FROM team_kits WHERE team_id = ANY($1)', [teamIds]);
       const assignRows = await pool.query('SELECT team_id, out_jersey, out_shorts, out_socks, gk_jersey, gk_shorts, gk_socks FROM game_kit_assignments WHERE game_id = $1', [gameId]);
       for (const team of teams) {
         team.kits = {};
         kitRows.rows.filter((r) => r.team_id === team.id).forEach((r) => {
-          team.kits[r.kit_type] = { jersey_color: r.jersey_color, shorts_color: r.shorts_color, socks_color: r.socks_color };
+          team.kits[r.kit_type] = { jersey_color: r.jersey_color, shorts_color: r.shorts_color, socks_color: r.socks_color, jersey_image_url: r.jersey_image_url, shorts_image_url: r.shorts_image_url, socks_image_url: r.socks_image_url };
         });
         team.kitAssignment = assignRows.rows.find((r) => r.team_id === team.id) || {};
       }
