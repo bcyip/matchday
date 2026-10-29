@@ -123,6 +123,9 @@
     <!-- Appears once both teams have enough players checked in -->
     <button id="checkInMatchReportBtn" style="display:none; width:100%; margin-bottom:16px;" onclick="showMatchReport()">Match Report</button>
 
+    <!-- Kits each team is wearing in this game; tap to see the actual kit photos (read-only) -->
+    <div id="checkInKitsTile" style="display:none; border:2px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:16px;"></div>
+
     <div class="section-label" style="text-align:center;">Select a team to begin check-in</div>
     <div id="teamSelector" style="display:flex; gap:10px; margin-bottom:16px;"></div>
 
@@ -506,6 +509,23 @@
   }
   function closeKitViewer() { document.getElementById('kitViewerOverlay').style.display = 'none'; }
 
+  function renderCheckInKitsTile() {
+    const tile = document.getElementById('checkInKitsTile');
+    if (!tile) return;
+    const cols = (gameData.teams || []).map(team => ({ team, html: teamKitsHtml(team) })).filter(c => c.html);
+    if (!cols.length) { tile.style.display = 'none'; tile.innerHTML = ''; return; }
+    tile.innerHTML = `
+      <div class="section-label" style="text-align:center; margin-bottom:6px;">Kits</div>
+      <div style="display:flex; gap:10px; align-items:flex-start;">
+        ${cols.map(c => `<div style="flex:1; min-width:0; text-align:center;">
+          <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; font-weight:600; color:var(--navy);">${escapeHtml(c.team.name)}</div>
+          ${c.html}
+        </div>`).join('')}
+      </div>
+      <div class="muted" style="text-align:center; font-size:11px; margin-top:8px;">Tap a kit to see the actual kit photos</div>`;
+    tile.style.display = '';
+  }
+
   function renderTeamSelector() {
     const container = document.getElementById('teamSelector');
     container.innerHTML = gameData.teams.map(team => `
@@ -513,9 +533,9 @@
         onclick="selectActiveTeam('${escapeJs(team.id)}')">
         ${team.logoUrl ? `<img src="${escapeHtml(team.logoUrl)}" alt="" style="width:44px; height:44px; object-fit:contain; margin-bottom:6px;" onerror="this.style.display='none'" />` : ''}
         <div class="tname">${escapeHtml(team.name)}</div>
-        ${teamKitsHtml(team)}
       </div>
     `).join('');
+    renderCheckInKitsTile();
     renderActiveRoster();
   }
 
