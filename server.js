@@ -127,7 +127,25 @@ async function getValidAccessToken() {
   return tokenRefreshInFlight;
 }
 
+// SportsEngine rate limits bursts ("TOO_MANY_REQUESTS"). A rate-limited call was not executed,
+// so it is safe to retry (queries and mutations alike) after a short, jittered backoff.
+function isRateLimitError(err) {
+  return /rate limit exceeded|TOO_MANY_REQUESTS/i.test(String((err && err.message) || ''));
+}
 async function callGraphQL(query, variables) {
+  const delays = [700, 1500, 3000];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await callGraphQLOnce(query, variables);
+    } catch (err) {
+      if (!isRateLimitError(err) || attempt >= delays.length) throw err;
+      console.warn('[graphql] Rate limited, retry ' + (attempt + 1) + '/' + delays.length);
+      await new Promise((r) => setTimeout(r, delays[attempt] + Math.floor(Math.random() * 400)));
+    }
+  }
+}
+
+async function callGraphQLOnce(query, variables) {
   const token = await getValidAccessToken();
   const body = JSON.stringify({ query, variables });
 
@@ -253,13 +271,21 @@ async function getSuspendedPlayers(teamId, asOfGameDate) {
 const SE_GAME_CACHE_TTL_MS = parseInt(process.env.SE_GAME_CACHE_TTL_SECONDS || '60', 10) * 1000;
 const SE_GAME_CACHE_MAX = 500;
 const seGameCache = new Map(); // gameId -> { expiresAt, promise }
+const seGameLastGood = new Map(); // gameId -> last successful SE data (stale fallback)
 
 function fetchSeGameDataCached(gameId, forceRefresh) {
   const now = Date.now();
   const hit = seGameCache.get(gameId);
   if (!forceRefresh && hit && hit.expiresAt > now) return hit.promise;
 
-  const promise = fetchSeGameData(gameId);
+  // If SportsEngine fails (rate limit, outage), serve the last good copy rather than erroring.
+  const promise = fetchSeGameData(gameId).then(
+    (d) => { seGameLastGood.set(gameId, d); return d; },
+    (err) => {
+      const g = seGameLastGood.get(gameId);
+      if (g) { console.warn('[api/game] SportsEngine failed, serving last good copy for', gameId + ':', err.message); return g; }
+      throw err;
+    });
   const entry = { expiresAt: now + SE_GAME_CACHE_TTL_MS, promise };
   seGameCache.set(gameId, entry);
   promise.catch(() => { if (seGameCache.get(gameId) === entry) seGameCache.delete(gameId); });
@@ -412,8 +438,9 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(result));
     } catch (err) {
       console.error('[api/game] Error:', err.message);
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+      const busy = isRateLimitError(err);
+      res.writeHead(busy ? 503 : 502, { 'Content-Type': 'application/json', 'Retry-After': '3' });
+      res.end(JSON.stringify({ error: busy ? 'Matchday is busy right now.' : err.message, retryable: true }));
     }
     return;
   }

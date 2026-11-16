@@ -89,6 +89,7 @@ button.secondary{border-color:var(--border);color:var(--navy)}
 .score-input-row input,.roster-row input[type="text"]{font-family:IndBlack,"Arial Black",sans-serif;border-color:var(--border);background:#F7F9FC}
 .done-banner{background:#E9F6EE}
 .back-link{font-family:IndDemi,Arial,sans-serif;letter-spacing:.06em;text-transform:uppercase;font-size:12px}
+
   </style>
 </head>
 <body>
@@ -118,6 +119,7 @@ button.secondary{border-color:var(--border);color:var(--navy)}
 
   <div id="errorState" class="card" style="display:none;">
     <p class="err" id="errorText"></p>
+    <p id="errorRefresh" style="display:none; text-align:center; margin-top:12px;"><button type="button" onclick="location.reload()">Refresh page</button></p>
   </div>
 
   <!-- LANDING: game info + Check In / Match Report choice -->
@@ -258,10 +260,30 @@ button.secondary{border-color:var(--border);color:var(--navy)}
   let config = { maxPlayers: 18, maxStaff: 5, minPlayersRequired: 7 };
   let checkinState = {}; // teamId:profileId -> { jerseyNumber, personType }
 
-  function showError(msg) {
+  function showError(msg, offerRefresh) {
     document.getElementById('loadingState').style.display = 'none';
     document.getElementById('errorState').style.display = 'block';
     document.getElementById('errorText').textContent = msg;
+    const rb = document.getElementById('errorRefresh');
+    if (rb) rb.style.display = offerRefresh ? 'block' : 'none';
+  }
+
+  // Loads the game, retrying a few times when the server/gateway is briefly unavailable
+  // (502/503/504, rate limits, an HTML error page instead of JSON, or a dropped connection).
+  const BUSY_MSG = 'Matchday is taking longer than usual to load. Please refresh the page to try again.';
+  async function fetchGameWithRetry(id) {
+    const waits = [1500, 3000, 5000];
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const res = await fetch('/api/game/' + encodeURIComponent(id));
+        const data = await res.json().catch(() => null);
+        if (res.ok && data) return data;
+        const transient = !data || res.status >= 500 || res.status === 429;
+        if (!transient) return data || { error: 'Could not load this game.' };
+      } catch (e) { /* network hiccup - retry */ }
+      if (attempt >= waits.length) return { error: BUSY_MSG, busy: true };
+      await new Promise(r => setTimeout(r, waits[attempt]));
+    }
   }
 
   function showLanding() {
@@ -280,10 +302,10 @@ button.secondary{border-color:var(--border);color:var(--navy)}
     try {
       const [configRes, gameRes] = await Promise.all([
         fetch('/api/config').then(r => r.json()),
-        fetch('/api/game/' + encodeURIComponent(gameId)).then(r => r.json()),
+        fetchGameWithRetry(gameId),
       ]);
 
-      if (gameRes.error) { showError(gameRes.error); return; }
+      if (gameRes.error) { showError(gameRes.error, !!gameRes.busy || !!gameRes.retryable); return; }
 
       config = configRes;
       gameData = gameRes;
@@ -326,7 +348,7 @@ button.secondary{border-color:var(--border);color:var(--navy)}
       updateMatchReportGate();
       renderAbandonUi();
     } catch (e) {
-      showError('Failed to load: ' + e.message);
+      showError('Matchday could not load. Please refresh the page to try again.', true);
     }
   }
 
